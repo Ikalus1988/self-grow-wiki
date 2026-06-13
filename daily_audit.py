@@ -35,10 +35,14 @@ logger = logging.getLogger("daily_audit")
 
 # ── 路径 ─────────────────────────────────────────────────────────────
 _HERE = Path(__file__).resolve().parent
-_QUESTION_BANK = _HERE / "Desktop" / "自研" / "rag-docs" / "RAG巡检题库_200题_20260508.json"
-_AUDIT_DIR = _HERE / "Desktop" / "自研" / "rag-docs" / "audit_reports"
+_RAG_DOCS = Path(os.environ.get("RAG_DOCS_DIR", "/mnt/c/Users/hp/Desktop/自研/rag-docs"))
+_QUESTION_BANK = Path(os.environ.get(
+    "RAG_QUESTION_BANK",
+    str(_RAG_DOCS / "RAG巡检题库_200题_20260508.json"),
+))
+_AUDIT_DIR = Path(os.environ.get("RAG_AUDIT_DIR", "/home/hp/audit_reports"))
 _SYNONYM_FILE = _HERE / "synonyms.json"
-_BADCASE_MD = _HERE / "Desktop" / "自研" / "rag-docs" / "badcase_汇总.md"
+_BADCASE_MD = _RAG_DOCS / "badcase_汇总.md"
 
 # fallback
 _QUESTION_BANK_ALT = _HERE / "RAG巡检题库_200题_20260508.json"
@@ -52,6 +56,7 @@ L2_COUNT = 2             # 其中 2 题 L2
 L3_COUNT = 5             # 5 题 L3
 MIN_ANSWER_LEN = 150     # 有效回答最短长度
 SCORE_WARN = 0.6         # 分数警告线
+NO_REPEAT_DAYS = 30      # 原则上 30 天内不重复抽题，题库耗尽时自动轮换
 
 # ── 加载题库 ─────────────────────────────────────────────────────────
 
@@ -70,14 +75,55 @@ def load_question_bank() -> list:
     return []
 
 
+def _question_id(q: dict) -> str:
+    """返回题目稳定 ID；无 id 时回退到 query，避免重复抽题。"""
+    return str(q.get("id") or q.get("query") or "")
+
+
+def _load_recent_qids(days: int = NO_REPEAT_DAYS) -> set:
+    """读取最近巡检已抽题目 ID；新旧报告格式都兼容。"""
+    recent = set()
+    if not _AUDIT_DIR.exists():
+        return recent
+
+    cutoff_ts = time.time() - days * 86400
+    for path in _AUDIT_DIR.glob("audit_*.json"):
+        try:
+            if path.stat().st_mtime < cutoff_ts:
+                continue
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        for qid in report.get("sampled_qids") or []:
+            if qid:
+                recent.add(str(qid))
+
+        for item in report.get("results") or []:
+            qid = item.get("qid") or item.get("id")
+            if qid:
+                recent.add(str(qid))
+
+    return recent
+
+
+def _exclude_recent_if_possible(pool: list, needed: int, recent_qids: set) -> list:
+    """优先从 30 天未抽过的池子抽；池子不够时允许月轮换。"""
+    fresh = [q for q in pool if _question_id(q) not in recent_qids]
+    return fresh if len(fresh) >= needed else pool
+
+
 def sample_questions(bank: list, seed: int = None) -> list:
-    """分层抽样：从 L2 抽 2 题，L3 抽 5 题（去重）。"""
+    """分层抽样：L2/L3 + tag 多样性 + 30 天内尽量不重复。"""
     if seed is None:
         seed = int(time.time())
     rng = random.Random(seed)
 
-    l2 = [q for q in bank if q.get("level", "").upper() == "L2"]
-    l3 = [q for q in bank if q.get("level", "").upper() != "L2"]
+    recent_qids = _load_recent_qids()
+    l2_all = [q for q in bank if q.get("level", "").upper() == "L2"]
+    l3_all = [q for q in bank if q.get("level", "").upper() != "L2"]
+    l2 = _exclude_recent_if_possible(l2_all, L2_COUNT, recent_qids)
+    l3 = _exclude_recent_if_possible(l3_all, L3_COUNT, recent_qids)
 
     # 对 L3 按 tag 进一步分层，确保类型多样性
     l3_by_tag = {}
@@ -94,8 +140,9 @@ def sample_questions(bank: list, seed: int = None) -> list:
     for tag in tags:
         if len(selected_l3) >= L3_COUNT:
             break
-        q = rng.choice(l3_by_tag[tag])
-        selected_l3.append(q)
+        candidates = [q for q in l3_by_tag[tag] if q not in selected_l3]
+        if candidates:
+            selected_l3.append(rng.choice(candidates))
 
     # 如果还不够，从剩余的 L3 补齐
     remaining = [q for q in l3 if q not in selected_l3]
@@ -103,8 +150,20 @@ def sample_questions(bank: list, seed: int = None) -> list:
     selected_l3.extend(remaining[:L3_COUNT - len(selected_l3)])
 
     result = selected_l2 + selected_l3
+
+    # 题库当前可能只有 L2 或某一层题量不足；保持 7 题预算，用全库未抽过题目补齐。
+    # 补齐仍优先 30 天未抽过，只有题库耗尽时才月轮换。
+    if len(result) < SAMPLE_SIZE:
+        selected_ids = {_question_id(q) for q in result}
+        fresh_bank = [q for q in bank if _question_id(q) not in recent_qids]
+        fill_pool = [q for q in fresh_bank if _question_id(q) not in selected_ids]
+        if len(fill_pool) < SAMPLE_SIZE - len(result):
+            fill_pool = [q for q in bank if _question_id(q) not in selected_ids]
+        rng.shuffle(fill_pool)
+        result.extend(fill_pool[:SAMPLE_SIZE - len(result)])
+
     rng.shuffle(result)  # 混排，不按难度顺序
-    return result
+    return result[:SAMPLE_SIZE]
 
 
 # ── API 调用 ─────────────────────────────────────────────────────────
@@ -321,8 +380,9 @@ def run_audit(dry_run: bool = False, quiet: bool = False) -> dict:
         "passed": passed,
         "rate_pct": round(rate, 1),
         "sigma": "4σ达标" if rate >= 95 else "3σ达标" if rate >= 90 else "需改进",
-        "method": "每天7题分层抽样 + 关键词命中验证 + 品牌污染检测",
+        "method": "每天7题分层抽样 + 30天去重/月轮换 + 关键词命中验证 + 品牌污染检测",
         "sample_seed": int(time.time()) % 100000,
+        "sampled_qids": [q_data.get("id", f"Q{i}") for i, q_data in enumerate(questions, 1)],
         "results": results,
         "bad_queries": bad_queries,
     }

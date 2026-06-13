@@ -51,8 +51,26 @@ _MODEL_SERIES_RE = re.compile(r'(?<![A-Za-z0-9])([A-Z]{1,2}-\d{2,4})(?!\d)')
 def _normalize_query(query: str) -> str:
     """将查询中的无连字符型号/报警代码规范化为带连字符形式."""
     q = query
+    # 常见现场写法标准化：CCLink/CC Link → CC-Link，R30iB → R-30iB
+    q = re.sub(r'(?i)CC\s*-?\s*Link', 'CC-Link', q)
+    q = re.sub(r'(?i)(?<![A-Za-z0-9])R\s*30i([AB])(?![A-Za-z0-9])', r'R-30i\1', q)
+    q = re.sub(r'(?i)([A-Z]{2,6}-\d{3,6})(CC-Link)', r'\1 \2', q)
+    q = re.sub(r'(?i)(CC-Link)([A-Z]{2,6})', r'\1 \2', q)
+    q = re.sub(r'(?i)(CRC)([\u4e00-\u9fff])', r'\1 \2', q)
+    q = re.sub(r'(?i)(R-30i[AB])([\u4e00-\u9fff])', r'\1 \2', q)
     # M900 → M-900, R2000 → R-2000
     q = re.sub(r'(?<![A-Za-z0-9])([A-Z]{1,2})(\d{2,4})(?!\d)', r'\1-\2', q)
+    # SRVO-228RIOfuseblown → SRVO-228 RI/O fuse blown（历史 badcase 中常见粘连写法）
+    q = re.sub(
+        r'(?<![A-Za-z])([A-Z]{2,6}-\d{3,6})(RIO)(fuse)(blown)',
+        lambda m: f'{m.group(1).upper()} RI/O fuse blown',
+        q,
+        flags=re.I,
+    )
+    # 英文报警码/缩写和中文后缀粘连时补空格："blown排查" → "blown 排查"
+    q = re.sub(r'([A-Za-z/]{4,})([\u4e00-\u9fff])', r'\1 \2', q)
+    # 保持常见品牌+中文名词的紧凑写法，避免把 FANUC机器人 拆成两个弱 token
+    q = re.sub(r'(?i)\b(FANUC)\s+(机器人)', r'\1\2', q)
     # SRVO023 → SRVO-023, svgn381 → SVGN-381
     q = re.sub(r'(?<![A-Za-z])([a-zA-Z]{2,6})(\d{3,6})(?![A-Za-z0-9])',
                lambda m: f'{m.group(1).upper()}-{m.group(2)}', q)
@@ -177,6 +195,16 @@ def _augment_query(query: str) -> str:
     if model_numbers:
         aug_parts.append("规格 参数")
 
+    # badcase 高频语义域：补领域锚点，不改变用户原意
+    if re.search(r'(?i)RI/O|RIO|FUSE|保险丝|SRVO-228|SRVO-229', query):
+        aug_parts.append("RI/O FUSE 保险丝 I/O板")
+    if re.search(r'(?i)CC-?Link|PRIO-323|CRC|终端电阻', query):
+        aug_parts.append("CC-Link CRC 终端电阻 通信")
+    if re.search(r'伺服放大器|电源模块|主电源模块|直流母线|servo\s*amp', query, re.I):
+        aug_parts.append("伺服放大器 主电源模块 直流母线")
+    if re.search(r'圆弧跟踪|焊缝跟踪|电弧跟踪|through[-\s]*arc|TAST', query, re.I):
+        aug_parts.append("Through-Arc Tracking TAST 焊缝跟踪 电弧跟踪 弧焊")
+
     # 短中文查询（2-10 字）且无明确实体：追加领域词提升匹配
     if 2 <= chinese_chars <= 8 and not alarm_codes and not model_numbers:
         if any(kw in query for kw in ['机器人', '伺服', '报警', '故障', '参数',
@@ -223,30 +251,12 @@ MODEL_CHANNELS = [
         "api_key": MIOFFICE_API_KEY,
         "timeout": 60,
     },
-    {
-        "id": "deepseek",
-        "name": "DeepSeek-V3",
-        "label": "DeepSeek (备用)",
-        "model_id": "deepseek-chat",
-        "api_base": "https://api.deepseek.com/v1",
-        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
-        "timeout": 60,
-    },
-    {
-        "id": "qwen-local",
-        "name": "Qwen2.5-3B (本地)",
-        "label": "Qwen (本地Ollama)",
-        "model_id": "qwen2.5:3b",
-        "api_base": OLLAMA_BASE,
-        "api_key": "ollama",
-        "timeout": 120,
-    },
 ]
 
 DEFAULT_TOP_K = 8
 MIN_SCORE = 0.45          # 语义分数低于此阈值的 chunk 直接丢弃
 MIN_TEXT_LEN = 30         # chunk 文本少于该字符数视为垃圾
-DEFAULT_TEMPERATURE = 0.3
+DEFAULT_TEMPERATURE = 0
 HEALTH_CHECK_INTERVAL = 120
 
 # BM25 混合检索配置
@@ -273,7 +283,8 @@ SYSTEM_PROMPT = """你是工业自动化技术文档助手。根据检索到的�
 6. 如果检索内容不足以回答，只说"知识库中未找到相关内容，建议换个关键词试试"，不要推荐具体的搜索词、手册名称或型号
 7. 如果用户问题太宽泛，先基于已检索到的内容简要回答，然后说"如需更详细的信息，可以补充具体型号或操作步骤再试"
 8. 绝对不要编造或猜测知识库中不存在的内容
-9. 通用零部件（电池、润滑脂、密封圈等）的规格通常在同一厂商的多个型号间通用，可以参考引用，但需注明"参考同系列机型文档" """
+9. 当片段相关度普遍偏低（例如最高相关度低于0.60）或片段只命中表面关键词时，只能把片段作为参考，不要被低质量片段带偏专业术语含义；需要明确说明"当前文档片段未直接覆盖该问题"
+10. 通用零部件（电池、润滑脂、密封圈等）的规格通常在同一厂商的多个型号间通用，可以参考引用，但需注明"参考同系列机型文档" """
 
 COMPARE_PROMPT = """你是工业自动化技术文档助手。根据检索到的多组文档片段，对用户指定的对象进行结构化对比。
 要求：
@@ -479,10 +490,13 @@ def get_collection():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"嵌入模型设备: {device}")
 
+    # HF Hub 网络不可达时必须离线加载（模型已缓存在本地）
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
     ef = SentenceTransformerEmbeddingFunction(
         model_name=EMBEDDING_MODEL,
         device=device,
         trust_remote_code=False,
+        local_files_only=True,
     )
 
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
@@ -729,21 +743,8 @@ _RERANKER = None
 
 
 def _get_reranker():
-    """获取 cross-encoder reranker 实例（懒加载，仅首次调用时初始化）。"""
-    global _RERANKER
-    if _RERANKER is not None:
-        return _RERANKER
-    try:
-        from sentence_transformers import CrossEncoder
-        _RERANKER = CrossEncoder(_RERANKER_MODEL)
-        logger.info(f"Cross-encoder reranker 已加载: {_RERANKER_MODEL}")
-        return _RERANKER
-    except ImportError:
-        logger.info("sentence-transformers 未安装，跳过 cross-encoder rerank")
-        return None
-    except Exception as e:
-        logger.warning(f"Cross-encoder 加载失败: {e}")
-        return None
+    """cross-encoder reranker 已禁用 — RRF+实体搜索排序足够，CPU推理25-60s不可接受."""
+    return None
 
 
 def _rerank_chunks(query: str, chunks: list, rerank_k: int = _RERANK_TOP_K) -> list:
@@ -787,6 +788,7 @@ def _build_chunk_v2(doc, meta, score):
     c["entity_model_variants"] = meta.get("entity_model_variants", "[]")
     # 内部字段用于 boost 计算
     c["_topic_tags"] = meta.get("topic_tags", "[]")
+    c["brand"] = meta.get("brand", "unknown")
     return c
 
 
@@ -967,7 +969,7 @@ def _rrf_fusion(vector_results, bm25_results, existing_texts, k=BM25_RRF_K):
     return chunks
 
 
-def retrieve(query: str, top_k: int = DEFAULT_TOP_K):
+def retrieve(query: str, top_k: int = DEFAULT_TOP_K, log_channel: str = ""):
     query = _normalize_query(query)
 
     # ── 多问题拆分 ──
@@ -993,13 +995,21 @@ def retrieve(query: str, top_k: int = DEFAULT_TOP_K):
 
         # 按分数排序，取 top_k*2（给后续 filter 留余量）
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
-        return all_chunks[:top_k * 2]
+        result = all_chunks[:top_k * 2]
+        if log_channel:
+            log_query(query, result, channel_name=log_channel, query_type="qa")
+        return result
 
-    return _retrieve_single(query, top_k)
+    result = _retrieve_single(query, top_k)
+    if log_channel:
+        log_query(query, result, channel_name=log_channel, query_type="qa")
+    return result
 
 
 def _retrieve_single(query: str, top_k: int):
+    _t0 = time.time()
     collection = get_collection()
+    _t1 = time.time()
 
     # ── 实体提取 ──
     alarm_codes = _extract_alarm_codes(query)
@@ -1019,25 +1029,35 @@ def _retrieve_single(query: str, top_k: int):
         where_filter = {"category": {"$eq": target_category}}
 
     # ── 并行：向量搜索 + BM25 搜索 ──
+    _t_pre = time.time()
+
     def _do_vector():
+        _tv = time.time()
         results = collection.query(
             query_texts=[expanded_query], n_results=top_k,
             where=where_filter,
         )
         if not results['documents'][0] and where_filter:
             results = collection.query(query_texts=[expanded_query], n_results=top_k)
+        _tv2 = time.time()
+        logger.info(f"[TIMING] vector query: {_tv2-_tv:.2f}s")
         return list(zip(
             results['documents'][0], results['metadatas'][0], results['distances'][0]
         ))
 
     def _do_bm25():
-        return _bm25_index.search(expanded_query, n_results=BM25_TOP_K, where_filter=where_filter)
+        _tb = time.time()
+        r = _bm25_index.search(expanded_query, n_results=BM25_TOP_K, where_filter=where_filter)
+        logger.info(f"[TIMING] BM25 search: {time.time()-_tb:.2f}s")
+        return r
 
     with ThreadPoolExecutor(max_workers=2) as _exe:
         _vec_fut = _exe.submit(_do_vector)
         _bm25_fut = _exe.submit(_do_bm25)
         vector_results = _vec_fut.result()
         bm25_results = _bm25_fut.result()
+    _t_parallel = time.time()
+    logger.info(f"[TIMING] vector+BM25 parallel: {_t_parallel-_t_pre:.2f}s")
 
     # ── RRF 融合 ──
     if bm25_results:
@@ -1053,6 +1073,7 @@ def _retrieve_single(query: str, top_k: int):
     existing_texts = {c["text"] for c in chunks}
 
     # ── 并行：实体精确搜索（alarm + model + variant） ──
+    _t_entity = time.time()
     _build_entity_index(collection)
     model_variants = _extract_model_variants(expanded_query) if model_numbers else []
 
@@ -1077,6 +1098,7 @@ def _retrieve_single(query: str, top_k: int):
             if _c["text"] not in existing_texts:
                 chunks.append(_c)
                 existing_texts.add(_c["text"])
+    logger.info(f"[TIMING] entity search: {time.time()-_t_entity:.2f}s (alarms={alarm_codes}, models={model_numbers})")
 
     # 型号规格后缀加分：多个 variant 命中同一 chunk 时加分
     if len(model_variants) >= 2:
@@ -1094,6 +1116,7 @@ def _retrieve_single(query: str, top_k: int):
     _topic_tag_boost(chunks, query)
 
     # 关键词精确补充：当查询含报警代码时，强制召回包含该字符串的 chunks
+    _t_alarm_kw = time.time()
     # PDF 中报警代码连字符可能是全角 "－"(U+FF0D) 或半角 "-"，但 entity extraction
     # Phase 1 已标准化 entity_alarms 元数据，此处直接对标准化后的 code 做全文包含匹配
     alarm_codes = _ALARM_CODE_RE.findall(query)
@@ -1129,7 +1152,9 @@ def _retrieve_single(query: str, top_k: int):
                 except Exception:
                     pass
 
+    logger.info(f"[TIMING] alarm_code $contains: {time.time()-_t_alarm_kw:.2f}s (codes={alarm_codes})")
     # 上位机/Robot Interface 关键词强制召回
+    _t_kw2 = time.time()
     # 用户问"上位机/寄存器读写"时常与 Robot Interface 文档语义距离远，需精确匹配补回
     _UPPER_COMPUTER_KW = re.compile(r'上位机|robot\s*interface|寄存器读|寄存器写|读写寄存器', re.I)
     if _UPPER_COMPUTER_KW.search(query):
@@ -1151,8 +1176,10 @@ def _retrieve_single(query: str, top_k: int):
                         existing_texts.add(doc)
             except Exception:
                 pass
+    logger.info(f"[TIMING] upper_computer_kw: {time.time()-_t_kw2:.2f}s")
 
     # 型号系列关键词补充：当查询含机器人型号时，强制召回该型号的文档
+    _t_model = time.time()
     model_series = _MODEL_SERIES_RE.findall(query.upper())
     # 过滤掉已被报警代码捕获的
     model_series = [m for m in model_series if m not in [c.upper() for c in alarm_codes]]
@@ -1196,6 +1223,8 @@ def _retrieve_single(query: str, top_k: int):
                     break
 
     # 话题补充搜索：去掉型号后做全库语义检索 + 关键词检索，捕获跨型号通用规格
+    logger.info(f"[TIMING] model_series search: {time.time()-_t_model:.2f}s (models={model_series})")
+    _t_topic = time.time()
     _topic_chunks = []
     if model_series:
         topic_q = re.sub(r'[A-Z]{1,2}-\d{2,4}[A-Za-z/\d]*', '', query).strip()
@@ -1241,6 +1270,7 @@ def _retrieve_single(query: str, top_k: int):
                     logger.debug(f"关键词补充搜索失败: {e}")
 
     # ── 过滤垃圾 chunk ──
+    logger.info(f"[TIMING] topic search: {time.time()-_t_topic:.2f}s")
     # 1. 文本过短（纯页码/纯URL）直接丢弃
     # 2. 语义分数过低（与查询不相关）直接丢弃
     # 3. 乱码文本（UTF-8 被错误解码为 Latin-1）丢弃
@@ -1266,10 +1296,28 @@ def _retrieve_single(query: str, top_k: int):
     # 按分数降序排序
     chunks.sort(key=lambda c: c["score"], reverse=True)
 
+    # ── 报警代码精确匹配加分 ──
+    # 当查询含报警代码时，对文本中包含该代码的 chunk 加分，确保精确匹配排在语义相似结果前面
+    alarm_codes = _ALARM_CODE_RE.findall(query)
+    if alarm_codes:
+        for c in chunks:
+            text_upper = c["text"].upper()
+            for code in alarm_codes:
+                code_upper = code.upper()
+                # 检查是否包含精确报警代码（考虑全角/半角连字符）
+                if code_upper in text_upper or code_upper.replace("-", "－") in text_upper:
+                    # 精确匹配加分：确保排在语义相似结果前面
+                    if c["score"] < 0.95:
+                        c["score"] = min(c["score"] + 0.30, 0.95)
+                        c["_alarm_exact_match"] = code
+                    break
+
     # ── Cross-encoder 重排序（可选） ──
     # 用 reranker 对 top-K 候选重新评分，提升排序精度。
     # 依赖 sentence-transformers，未安装时自动跳过。
+    _t_rerank = time.time()
     chunks = _rerank_chunks(query, chunks)
+    logger.info(f"[TIMING] rerank: {time.time()-_t_rerank:.2f}s ({len(chunks)} chunks)")
 
     # 文件多样性：同一文件最多保留 max_per_file 个 chunk，确保覆盖更多文件
     max_per_file = 3 if model_series else top_k
@@ -1295,16 +1343,26 @@ def _retrieve_single(query: str, top_k: int):
         for tc in missed[:2]:
             chunks.append(tc)
 
-    # ── 品牌过滤：查询明确提 FANUC 时，排除非 FANUC 文档（如 KUKA） ──
-    if re.search(r'fanuc', query, re.I):
-        _fanuc_pat = re.compile(r'(?i)fanuc|B-\d{5}|R-30i[AB]|M-\d{3}|A-\d{5}')
-        filtered = [c for c in chunks
-                    if _fanuc_pat.search(c.get("filename", "") + c.get("source", ""))]
-        if filtered:
-            chunks = filtered
+    # ── 品牌过滤：基于 ChromaDB brand 元数据，排除非 FANUC 文档 ──
+    before = len(chunks)
+    good = [c for c in chunks
+            if c.get("brand", "unknown") in ("fanuc", "unknown")]
+    if good:
+        chunks = good
+        removed = before - len(good)
+        if removed:
+            logger.info(f"品牌过滤: 排除 {removed}/{before} 个, 保留 {len(good)} 个")
+    else:
+        # 全部是竞品文档：保留 top-5 高分的（品牌过滤告知前台）
+        logger.warning(f"品牌过滤: 全部 {before} 个文档为非 FANUC 品牌，保留最高分项")
+        chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
+        chunks = chunks[:min(5, before)]
+        for c in chunks:
+            c["_non_fanuc"] = True
 
     for i, c in enumerate(chunks):
         c["index"] = i + 1
+    logger.info(f"[TIMING] _retrieve_single TOTAL: {time.time()-_t0:.2f}s (init={_t1-_t0:.1f}s, top_k={top_k}, result={len(chunks)} chunks)")
     return chunks
 
 
@@ -1388,6 +1446,8 @@ def generate_with_failover(query, chunks, preferred, temperature, usage_info=Non
                 model=ch["model_id"],
                 messages=messages,
                 temperature=temperature,
+                seed=42,
+                top_p=1,
                 max_tokens=4096,
                 stream=True,
                 timeout=ch["timeout"],
@@ -1555,6 +1615,8 @@ def generate_compare(subjects: list, aspect: str = "", top_k: int = 10,
                 model=ch["model_id"],
                 messages=messages,
                 temperature=temperature,
+                seed=42,
+                top_p=1,
                 max_tokens=4096,
                 stream=True,
                 timeout=ch["timeout"],
@@ -1745,6 +1807,8 @@ def generate_report(topic: str, report_type: str = "theme",
                 model=ch["model_id"],
                 messages=messages,
                 temperature=temperature,
+                seed=42,
+                top_p=1,
                 max_tokens=4096,
                 stream=True,
                 timeout=ch["timeout"],

@@ -29,6 +29,7 @@ FANUC_ALARM_PREFIXES = (
     'FCTN', 'DSQC', 'SMB', 'ENC', 'PNIO', 'DRAG', 'JPOS', 'SYS',
     'SVO2', 'SVON', 'CMND', 'MCTL', 'TUN', 'DMIO', 'GIOP',
     'ROTP', 'WELD', 'CUT', 'TOOL', 'DIST', 'MOT', 'CURR',
+    'MEMO', 'MCTL',
 )
 _ALARM_PATTERN = '|'.join(FANUC_ALARM_PREFIXES)
 ALARM_RE = re.compile(
