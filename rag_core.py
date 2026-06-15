@@ -48,9 +48,26 @@ _ALARM_CODE_RE = re.compile(r'(?<![A-Za-z])([A-Z]{2,6}-\d{3,6})(?![A-Za-z0-9])',
 _MODEL_SERIES_RE = re.compile(r'(?<![A-Za-z0-9])([A-Z]{1,2}-\d{2,4})(?!\d)')
 
 
+# ── 中文别名 → FANUC 标准术语 ──────────────────────────────────────────
+_CHINESE_ALIASES = {
+    "法那科": "FANUC",
+    "法兰克": "FANUC",
+    "发那科": "FANUC",
+    "发那克": "FANUC",
+    "法纳科": "FANUC",
+    "fanuc机器人": "FANUC机器人",
+}
+_CHINESE_ALIAS_RE = re.compile("|".join(re.escape(k) for k in _CHINESE_ALIASES), re.I)
+
+
 def _normalize_query(query: str) -> str:
     """将查询中的无连字符型号/报警代码规范化为带连字符形式."""
     q = query
+    # 中文别名标准化：法那科/发那科/法兰克 → FANUC（中文与英文间补空格）
+    q = _CHINESE_ALIAS_RE.sub(lambda m: _CHINESE_ALIASES[m.group().lower()], q)
+    q = re.sub(r'(FANUC)([A-Z0-9])', r'\1 \2', q)  # FANUCM-900 → FANUC M-900
+    # CR 系列协作机器人：CR35iA → CR-35iA, CR7iA → CR-7iA
+    q = re.sub(r'(?<![A-Za-z0-9])CR(\d{1,2})(i[A-Z]?)(?![A-Za-z0-9])', r'CR-\1\2', q, flags=re.I)
     # 常见现场写法标准化：CCLink/CC Link → CC-Link，R30iB → R-30iB
     q = re.sub(r'(?i)CC\s*-?\s*Link', 'CC-Link', q)
     q = re.sub(r'(?i)(?<![A-Za-z0-9])R\s*30i([AB])(?![A-Za-z0-9])', r'R-30i\1', q)
