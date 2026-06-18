@@ -988,6 +988,7 @@ def _rrf_fusion(vector_results, bm25_results, existing_texts, k=BM25_RRF_K):
 
 def retrieve(query: str, top_k: int = DEFAULT_TOP_K, log_channel: str = ""):
     query = _normalize_query(query)
+    _req_id = f"rq_{int(time.time()*1000) % 10**8:08d}"  # 短 request_id
 
     # ── 多问题拆分 ──
     # 当一条消息含"以及/还有/另外/同时/并且"时，拆成多个子问题分别检索再合并
@@ -1014,12 +1015,12 @@ def retrieve(query: str, top_k: int = DEFAULT_TOP_K, log_channel: str = ""):
         all_chunks.sort(key=lambda x: x["score"], reverse=True)
         result = all_chunks[:top_k * 2]
         if log_channel:
-            log_query(query, result, channel_name=log_channel, query_type="qa")
+            log_query(query, result, channel_name=log_channel, query_type="qa", request_id=_req_id)
         return result
 
     result = _retrieve_single(query, top_k)
     if log_channel:
-        log_query(query, result, channel_name=log_channel, query_type="qa")
+        log_query(query, result, channel_name=log_channel, query_type="qa", request_id=_req_id)
     return result
 
 
@@ -1977,18 +1978,23 @@ def _init_log_db():
 _init_log_db()
 
 
+_LOG_FALLBACK_PATH = QUERY_LOG_DB.parent / "query_log_fallback.jsonl"
+_LOG_FALLBACK_MAX = 1000  # 兜底文件最大行数，超过截断
+
+
 def log_query(query: str, chunks: list, channel_id: str = "",
               channel_name: str = "", latency_ms: int = 0,
               tokens_prompt: int = 0, tokens_completion: int = 0,
               status: str = "success", error_msg: str = "",
-              query_type: str = "qa", category: str = ""):
+              query_type: str = "qa", category: str = "",
+              request_id: str = ""):
     scores = [c["score"] for c in chunks] if chunks else []
     top_score = max(scores) if scores else 0.0
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
     with _log_lock:
         try:
-            conn = sqlite3.connect(str(QUERY_LOG_DB))
+            conn = sqlite3.connect(str(QUERY_LOG_DB), timeout=5)
             cur = conn.execute(
                 """INSERT INTO query_log
                    (query_type, query, category, top_score, avg_score, num_chunks,
@@ -2003,7 +2009,25 @@ def log_query(query: str, chunks: list, channel_id: str = "",
             conn.commit()
             conn.close()
             return query_id
-        except Exception:
+        except Exception as e:
+            # 兜底：写入本地 JSONL 文件，不丢失日志
+            try:
+                import json as _json
+                entry = {
+                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "query": query[:200], "top_score": round(top_score, 3),
+                    "channel": channel_name, "status": status,
+                    "error": str(e)[:100], "request_id": request_id,
+                }
+                with open(_LOG_FALLBACK_PATH, "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+                # 截断兜底文件防止无限增长
+                lines = _LOG_FALLBACK_PATH.read_text().splitlines()
+                if len(lines) > _LOG_FALLBACK_MAX:
+                    _LOG_FALLBACK_PATH.write_text("\n".join(lines[-_LOG_FALLBACK_MAX:]) + "\n")
+            except Exception:
+                pass
+            logger.warning(f"log_query 失败: {e}")
             return None
 
 
