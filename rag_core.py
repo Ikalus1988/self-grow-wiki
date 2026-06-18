@@ -15,7 +15,10 @@ import pickle as _pickle
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +278,9 @@ MIN_SCORE = 0.45          # 语义分数低于此阈值的 chunk 直接丢弃
 MIN_TEXT_LEN = 30         # chunk 文本少于该字符数视为垃圾
 DEFAULT_TEMPERATURE = 0
 HEALTH_CHECK_INTERVAL = 120
+RISK_LOW_CONFIDENCE = 0.65
+RISK_VERY_LOW_CONFIDENCE = 0.4
+RISK_SLOW_QUERY_MS = 30000
 
 # BM25 混合检索配置
 BM25_INDEX_PATH = CHROMA_DIR / "bm25_index.pkl"
@@ -1452,6 +1458,8 @@ def generate_with_failover(query, chunks, preferred, temperature, usage_info=Non
         yield ("", f"连接 {ch_name}...")
 
         try:
+            if OpenAI is None:
+                raise RuntimeError("openai SDK 未安装，请先安装 requirements.txt 中的 openai 依赖")
             client = OpenAI(
                 base_url=ch["api_base"],
                 api_key=ch["api_key"],
@@ -1933,6 +1941,8 @@ _log_lock = threading.Lock()
 
 def _init_log_db():
     conn = sqlite3.connect(str(QUERY_LOG_DB))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS query_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1949,11 +1959,26 @@ def _init_log_db():
             tokens_prompt INTEGER,
             tokens_completion INTEGER,
             status TEXT NOT NULL DEFAULT 'success',
-            error_msg TEXT
+            error_msg TEXT,
+            risk_tags TEXT,
+            has_source INTEGER NOT NULL DEFAULT 0,
+            source_count INTEGER NOT NULL DEFAULT 0
         )
     """)
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(query_log)")}
+    migrations = [
+        ("risk_tags", "ALTER TABLE query_log ADD COLUMN risk_tags TEXT"),
+        ("has_source", "ALTER TABLE query_log ADD COLUMN has_source INTEGER NOT NULL DEFAULT 0"),
+        ("source_count", "ALTER TABLE query_log ADD COLUMN source_count INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for col, ddl in migrations:
+        if col not in existing_cols:
+            conn.execute(ddl)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_log_ts ON query_log(ts)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_log_risk_tags ON query_log(risk_tags)
     """)
     # ── 反馈表 ──
     conn.execute("""
@@ -1975,7 +2000,51 @@ def _init_log_db():
     conn.close()
 
 
-_init_log_db()
+try:
+    _init_log_db()
+except Exception as e:
+    logger.warning(f"查询日志数据库初始化失败: {e}")
+
+
+_NEGATIVE_FEEDBACK_RE = re.compile(
+    r"不对|不是这个|没用|不行|还是不行|答非所问|看不懂|没找到|不准确|错了|错误|没有解决"
+)
+
+
+def infer_risk_tags(query: str, chunks: list, latency_ms: int = 0,
+                    status: str = "success", error_msg: str = "") -> list:
+    """Infer implicit quality-risk tags from retrieval and runtime signals."""
+    scores = [c.get("score", 0.0) for c in chunks] if chunks else []
+    top_score = max(scores) if scores else 0.0
+    filenames = {
+        c.get("filename")
+        for c in chunks
+        if c.get("filename") and c.get("filename") != "unknown"
+    }
+
+    tags = []
+    if not chunks:
+        tags.append("no_chunks")
+    if chunks and top_score < RISK_VERY_LOW_CONFIDENCE:
+        tags.append("very_low_confidence")
+    elif chunks and top_score < RISK_LOW_CONFIDENCE:
+        tags.append("low_confidence")
+    if chunks and not filenames:
+        tags.append("no_source")
+    if len(filenames) >= 5 and top_score < 0.8:
+        tags.append("source_scatter")
+    if status != "success":
+        tags.append("runtime_error")
+    if error_msg:
+        tags.append("has_error_msg")
+    if latency_ms and latency_ms >= RISK_SLOW_QUERY_MS:
+        tags.append("slow_query")
+    if _NEGATIVE_FEEDBACK_RE.search(query or ""):
+        tags.append("explicit_negative")
+    if re.search(r"图片|截图|照片|拍照|见图|看图", query or ""):
+        tags.append("possible_multimodal_gap")
+
+    return list(dict.fromkeys(tags))
 
 
 _LOG_FALLBACK_PATH = QUERY_LOG_DB.parent / "query_log_fallback.jsonl"
@@ -1991,19 +2060,28 @@ def log_query(query: str, chunks: list, channel_id: str = "",
     scores = [c["score"] for c in chunks] if chunks else []
     top_score = max(scores) if scores else 0.0
     avg_score = sum(scores) / len(scores) if scores else 0.0
+    source_names = {
+        c.get("filename")
+        for c in chunks
+        if c.get("filename") and c.get("filename") != "unknown"
+    }
+    risk_tags = infer_risk_tags(query, chunks, latency_ms, status, error_msg)
 
     with _log_lock:
         try:
             conn = sqlite3.connect(str(QUERY_LOG_DB), timeout=5)
+            conn.execute("PRAGMA busy_timeout=5000")
             cur = conn.execute(
                 """INSERT INTO query_log
                    (query_type, query, category, top_score, avg_score, num_chunks,
                     channel_id, channel_name, latency_ms,
-                    tokens_prompt, tokens_completion, status, error_msg)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tokens_prompt, tokens_completion, status, error_msg,
+                    risk_tags, has_source, source_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (query_type, query, category, top_score, avg_score, len(chunks),
                  channel_id, channel_name, latency_ms,
-                 tokens_prompt, tokens_completion, status, error_msg),
+                 tokens_prompt, tokens_completion, status, error_msg,
+                 ",".join(risk_tags), 1 if source_names else 0, len(source_names)),
             )
             query_id = cur.lastrowid
             conn.commit()
@@ -2110,6 +2188,19 @@ def get_log_stats(days: int = 7):
             (cutoff,),
         ).fetchall()
 
+        risk_rows = conn.execute(
+            """SELECT risk_tags, COUNT(*) c FROM query_log
+               WHERE ts >= ? AND COALESCE(risk_tags, '') != ''
+               GROUP BY risk_tags ORDER BY c DESC LIMIT 50""",
+            (cutoff,),
+        ).fetchall()
+
+        risk_counts = {}
+        for row in risk_rows:
+            for tag in (row["risk_tags"] or "").split(","):
+                if tag:
+                    risk_counts[tag] = risk_counts.get(tag, 0) + row["c"]
+
         conn.close()
         return {
             "total": total,
@@ -2117,6 +2208,10 @@ def get_log_stats(days: int = 7):
             "by_status": [dict(r) for r in by_status],
             "low_score_queries": [dict(r) for r in low_score],
             "top_queries": [dict(r) for r in top_queries],
+            "risk_tags": [
+                {"risk_tag": tag, "c": count}
+                for tag, count in sorted(risk_counts.items(), key=lambda item: item[1], reverse=True)
+            ],
         }
 
 

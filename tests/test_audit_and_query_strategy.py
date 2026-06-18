@@ -95,6 +95,33 @@ class QueryStrategyTest(unittest.TestCase):
         tracking = rag_core._augment_query("发那科机器人圆弧跟踪怎么设置")
         self.assertIn("Through-Arc Tracking", tracking)
 
+    def test_infer_risk_tags_from_implicit_failure_signals(self):
+        chunks = [{"score": 0.5, "filename": "manual-a.pdf"}]
+        tags = rag_core.infer_risk_tags("不是这个答案，还是不行，见截图", chunks, latency_ms=31000)
+
+        self.assertIn("low_confidence", tags)
+        self.assertIn("explicit_negative", tags)
+        self.assertIn("possible_multimodal_gap", tags)
+        self.assertIn("slow_query", tags)
+
+    def test_log_query_persists_risk_tags_and_source_counts(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "query_log.db"
+            with mock.patch.object(rag_core, "QUERY_LOG_DB", db_path):
+                rag_core._init_log_db()
+                query_id = rag_core.log_query(
+                    "不是这个，见截图",
+                    [{"score": 0.5, "filename": "manual-a.pdf"}],
+                    latency_ms=31000,
+                )
+
+                self.assertIsNotNone(query_id)
+                logs = rag_core.get_query_logs(limit=1)
+                self.assertEqual(logs[0]["has_source"], 1)
+                self.assertEqual(logs[0]["source_count"], 1)
+                self.assertIn("low_confidence", logs[0]["risk_tags"])
+                self.assertIn("explicit_negative", logs[0]["risk_tags"])
+
 
 if __name__ == "__main__":
     unittest.main()
