@@ -7,6 +7,15 @@ with open("/mnt/c/Users/hp/MisakaNet/lessons.json") as f:
 
 new_entries = [
     {
+        "id": "communication-native-rag-engineering-roadmap",
+        "title": "面向通讯场景的专业知识 RAG 工程收敛复盘",
+        "domain": "rag",
+        "tags": ["rag", "agent-gateway", "im", "flywheel", "reliability", "roadmap"],
+        "summary": "将专业知识 RAG 嵌入通讯场景，通过 Agent 网关、隐式失败信号、质量飞轮和可控稳定性实现工程收敛",
+        "url": "lessons/communication-native-rag-engineering-roadmap.md",
+        "updated": "2026-06-18"
+    },
+    {
         "id": "rag-kb-quality-flywheel-self-loop",
         "title": "RAG 知识库质量飞轮：自闭环建设",
         "domain": "rag",
