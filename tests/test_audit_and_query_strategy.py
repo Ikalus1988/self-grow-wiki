@@ -122,6 +122,33 @@ class QueryStrategyTest(unittest.TestCase):
                 self.assertIn("low_confidence", logs[0]["risk_tags"])
                 self.assertIn("explicit_negative", logs[0]["risk_tags"])
 
+    def test_build_risk_cluster_report_groups_alarm_queries(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "query_log.db"
+            with mock.patch.object(rag_core, "QUERY_LOG_DB", db_path):
+                rag_core._init_log_db()
+                rag_core.log_query(
+                    "SRVO-023 报警不是这个答案",
+                    [{"score": 0.5, "filename": "alarm.pdf"}],
+                    latency_ms=31000,
+                )
+                rag_core.log_query(
+                    "SRVO-228 还是不行",
+                    [{"score": 0.55, "filename": "alarm.pdf"}],
+                )
+                rag_core.log_query(
+                    "M-900 负载参数见截图",
+                    [{"score": 0.5, "filename": "spec.pdf"}],
+                )
+
+                clusters = rag_core.get_risk_clusters(days=7, top_n=5)
+                report = rag_core.build_risk_cluster_report(days=7, top_n=5)
+
+        self.assertEqual(clusters[0]["cluster_key"], "报警码:SRVO")
+        self.assertEqual(clusters[0]["count"], 2)
+        self.assertIn("报警码:SRVO", report)
+        self.assertIn("建议动作", report)
+
 
 if __name__ == "__main__":
     unittest.main()

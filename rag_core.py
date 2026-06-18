@@ -2215,6 +2215,145 @@ def get_log_stats(days: int = 7):
         }
 
 
+_QUERY_CLUSTER_STOPWORDS = re.compile(
+    r"怎么|如何|什么|一下|请问|查询|介绍|处理|解决|排查|方法|步骤|的|了|和|与|以及|还有|另外|是否|可以|需要|机器人|FANUC",
+    re.I,
+)
+
+
+def _query_cluster_key(query: str) -> str:
+    """Build a stable, privacy-light key for grouping similar risk queries."""
+    normalized = _normalize_query(query or "").upper()
+    alarms = _extract_alarm_codes(normalized)
+    if alarms:
+        prefixes = sorted({code.split("-")[0] for code in alarms})
+        return "报警码:" + "/".join(prefixes)
+
+    models = _extract_model_numbers(normalized)
+    if models:
+        series = sorted({re.sub(r"/.*$", "", model) for model in models})
+        return "型号:" + "/".join(series[:3])
+
+    compact = re.sub(r"[^A-Z0-9\u4e00-\u9fff]+", " ", normalized)
+    compact = _QUERY_CLUSTER_STOPWORDS.sub(" ", compact)
+    tokens = [t for t in compact.split() if len(t) >= 2]
+    if not tokens:
+        return "其他问题"
+    return "关键词:" + " ".join(tokens[:4])
+
+
+def get_risk_clusters(days: int = 7, top_n: int = 10) -> list:
+    """Return top risk query clusters for lightweight weekly review."""
+    cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    with _log_lock:
+        conn = sqlite3.connect(str(QUERY_LOG_DB), timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        rows = conn.execute(
+            """SELECT id, ts, query, top_score, latency_ms, risk_tags, status, source_count
+               FROM query_log
+               WHERE ts >= ? AND COALESCE(risk_tags, '') != ''
+               ORDER BY id DESC LIMIT 1000""",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+
+    clusters = {}
+    for row in rows:
+        query = row["query"] or ""
+        key = _query_cluster_key(query)
+        item = clusters.setdefault(key, {
+            "cluster_key": key,
+            "count": 0,
+            "risk_tags": {},
+            "examples": [],
+            "avg_top_score": 0.0,
+            "avg_latency_ms": 0.0,
+            "max_latency_ms": 0,
+            "no_source_count": 0,
+            "status_counts": {},
+        })
+        item["count"] += 1
+        score = row["top_score"] or 0.0
+        latency = row["latency_ms"] or 0
+        item["avg_top_score"] += score
+        item["avg_latency_ms"] += latency
+        item["max_latency_ms"] = max(item["max_latency_ms"], latency)
+        if (row["source_count"] or 0) == 0:
+            item["no_source_count"] += 1
+        status = row["status"] or "unknown"
+        item["status_counts"][status] = item["status_counts"].get(status, 0) + 1
+        for tag in (row["risk_tags"] or "").split(","):
+            if tag:
+                item["risk_tags"][tag] = item["risk_tags"].get(tag, 0) + 1
+        if len(item["examples"]) < 3:
+            item["examples"].append({
+                "query": query,
+                "top_score": round(score, 4),
+                "risk_tags": row["risk_tags"] or "",
+                "ts": row["ts"],
+            })
+
+    result = []
+    for item in clusters.values():
+        count = item["count"]
+        item["avg_top_score"] = round(item["avg_top_score"] / count, 4) if count else 0.0
+        item["avg_latency_ms"] = int(item["avg_latency_ms"] / count) if count else 0
+        item["risk_tags"] = [
+            {"risk_tag": tag, "c": c}
+            for tag, c in sorted(item["risk_tags"].items(), key=lambda pair: pair[1], reverse=True)
+        ]
+        result.append(item)
+
+    result.sort(
+        key=lambda item: (
+            item["count"],
+            item["no_source_count"],
+            -item["avg_top_score"],
+            item["max_latency_ms"],
+        ),
+        reverse=True,
+    )
+    return result[:top_n]
+
+
+def build_risk_cluster_report(days: int = 7, top_n: int = 10) -> str:
+    """Build a markdown report of top risk clusters without requiring a dashboard."""
+    clusters = get_risk_clusters(days=days, top_n=top_n)
+    lines = [
+        f"# 最近 {days} 天 Top {top_n} 风险问题簇",
+        "",
+        "本报告基于 query_log 中的 risk_tags 自动聚合，用于每周小步修复。",
+        "",
+    ]
+    if not clusters:
+        lines.append("暂无风险问题簇。")
+        return "\n".join(lines)
+
+    for idx, item in enumerate(clusters, 1):
+        tags = ", ".join(f"{t['risk_tag']}×{t['c']}" for t in item["risk_tags"][:5]) or "无"
+        status = ", ".join(f"{k}×{v}" for k, v in item["status_counts"].items()) or "unknown"
+        lines.extend([
+            f"## {idx}. {item['cluster_key']}",
+            "",
+            f"- 出现次数：{item['count']}",
+            f"- 平均 top_score：{item['avg_top_score']}",
+            f"- 平均耗时：{item['avg_latency_ms']}ms，最大耗时：{item['max_latency_ms']}ms",
+            f"- 无来源次数：{item['no_source_count']}",
+            f"- 风险标签：{tags}",
+            f"- 状态分布：{status}",
+            "- 示例问题：",
+        ])
+        for ex in item["examples"]:
+            lines.append(f"  - `{ex['query']}` (score={ex['top_score']}, tags={ex['risk_tags']})")
+        lines.extend([
+            "- 建议动作：优先检查该簇的召回规则、同义词、文档覆盖、回答模板，并将修复后的代表问题加入 regression_set。",
+            "",
+        ])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def get_token_stats(days: int = 7):
     """Token 消耗统计 — 按天、按通道聚合."""
     with _log_lock:
