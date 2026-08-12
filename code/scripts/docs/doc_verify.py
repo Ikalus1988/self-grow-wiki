@@ -170,7 +170,7 @@ def wiki_search_raw(claim: str, top_k: int = 10) -> list:
 # 第三步：LLM 判断一致性
 # ============================================================
 
-DEEPSEEK_KEY = "sk-REPLACED"
+DEEPSEEK_KEY = _load_deepseek_key()
 DEEPSEEK_API = "https://api.deepseek.com/v1"
 
 def llm_verify(claim: str, doc_answer: str, wiki_context: str) -> Dict:
@@ -203,7 +203,7 @@ def llm_verify(claim: str, doc_answer: str, wiki_context: str) -> Dict:
 """
 
     from openai import OpenAI
-    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
     
     try:
         resp = client.chat.completions.create(

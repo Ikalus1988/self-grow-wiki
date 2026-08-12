@@ -13,7 +13,7 @@ from rag_core import retrieve, _normalize_query, get_collection
 from openai import OpenAI
 
 LLM = OpenAI(
-    api_key="sk-REPLACED",
+    api_key=_load_deepseek_key(),
     base_url="https://api.deepseek.com/v1"
 )
 

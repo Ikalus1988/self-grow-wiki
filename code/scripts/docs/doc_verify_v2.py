@@ -156,7 +156,7 @@ def wiki_search_raw(claim: str, top_k: int = 10) -> list:
 # 第三步：LLM 判断一致性（分题型）
 # ============================================================
 
-DEEPSEEK_KEY = "sk-REPLACED"
+DEEPSEEK_KEY = _load_deepseek_key()
 DEEPSEEK_API = "https://api.deepseek.com/v1"
 
 
@@ -208,7 +208,7 @@ def _llm_verify_judgment(c: dict, wiki_context: str) -> Dict:
 """
     
     from openai import OpenAI
-    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
@@ -263,7 +263,7 @@ def _llm_verify_fill(c: dict, wiki_context: str) -> Dict:
 - 信息不全：知识库有但不精确，或答案不完整
 """
     from openai import OpenAI
-    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
@@ -303,7 +303,7 @@ def _llm_verify_generic(c: dict, wiki_context: str) -> Dict:
 }}
 """
     from openai import OpenAI
-    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",

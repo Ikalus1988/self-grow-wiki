@@ -16,7 +16,7 @@ from openai import OpenAI
 random.seed(20260430)
 
 LLM = OpenAI(
-    api_key="sk-REPLACED",
+    api_key=_load_deepseek_key(),
     base_url="https://api.deepseek.com/v1"
 )
 

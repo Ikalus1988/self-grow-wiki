@@ -13,11 +13,11 @@ from rag_core import get_collection, _bm25_index
 from openai import OpenAI
 
 # 使用 MiMo Flash
-FLASH_KEY = "sk-REPLACED"
+FLASH_KEY = _load_deepseek_key()
 FLASH_BASE = "https://api.llm.mioffice.cn/v1"
 FLASH_MODEL = "xiaomi/mimo-v2-flash"
 
-FLASH_LLM = OpenAI(api_key=FLASH_KEY, base_url=FLASH_BASE)
+FLASH_LLM = OpenAI(api_key=_load_deepseek_key(), base_url=FLASH_BASE)
 
 def flash_json(prompt, sys_msg="你是一个工业自动化文档审计专家。只输出JSON。"):
     for attempt in range(2):

@@ -17,7 +17,7 @@ import json
 import re
 import time
 
-DEEPSEEK_KEY = "sk-REPLACED"
+DEEPSEEK_KEY = _load_deepseek_key()
 DEEPSEEK_API = "https://api.deepseek.com/v1"
 
 def wiki_get(topic: str, top_k: int = 8) -> list:
@@ -52,7 +52,7 @@ def gen_questions(topic: str, wiki_text: str, q_type: str, count: int = 3) -> li
 直接输出 JSON 数组，不要其他文字。
 """
     try:
-        client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+        client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": "你是工业自动化考试出题专家。只输出 JSON 数组。"},
@@ -227,7 +227,7 @@ def main():
 输出 JSON：{{"answer": "标准答案内容"}}
 """
         try:
-            client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
+            client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
             resp = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "system", "content": "只输出 JSON。"},

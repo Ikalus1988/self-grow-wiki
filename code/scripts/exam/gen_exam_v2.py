@@ -7,7 +7,7 @@ sys.path.insert(0, '/home/eric_jia/self-grow-wiki')
 from rag_core import retrieve
 from openai import OpenAI
 
-KEY = "sk-REPLACED"
+KEY = _load_deepseek_key()
 API = "https://api.deepseek.com/v1"
 
 def wiki(topic, k=8):
@@ -15,7 +15,7 @@ def wiki(topic, k=8):
 
 def llm(prompt, sys_msg="只输出 JSON。"):
     try:
-        client = OpenAI(api_key=KEY, base_url=API)
+        client = OpenAI(api_key=_load_deepseek_key(), base_url=API)
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": sys_msg},
