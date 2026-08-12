@@ -3,6 +3,20 @@
 生成完整试卷 v2 — 确保所有选择题有完整选项文本，格式供 doc_verify 解析。
 """
 import sys, json, re
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 sys.path.insert(0, '/home/eric_jia/self-grow-wiki')
 from rag_core import retrieve
 from openai import OpenAI
@@ -15,7 +29,7 @@ def wiki(topic, k=8):
 
 def llm(prompt, sys_msg="只输出 JSON。"):
     try:
-        client = OpenAI(api_key=_load_deepseek_key(), base_url=API)
+        client = OpenAI(api_key=KEY, base_url=API)
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": sys_msg},

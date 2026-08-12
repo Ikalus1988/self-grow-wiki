@@ -10,6 +10,20 @@
 """
 
 import sys
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 sys.path.insert(0, '/mnt/c/Users/Eric Jia/self-grow-wiki')
 from rag_core import retrieve
 from openai import OpenAI
@@ -52,7 +66,7 @@ def gen_questions(topic: str, wiki_text: str, q_type: str, count: int = 3) -> li
 直接输出 JSON 数组，不要其他文字。
 """
     try:
-        client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+        client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": "你是工业自动化考试出题专家。只输出 JSON 数组。"},
@@ -227,7 +241,7 @@ def main():
 输出 JSON：{{"answer": "标准答案内容"}}
 """
         try:
-            client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+            client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
             resp = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "system", "content": "只输出 JSON。"},

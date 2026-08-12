@@ -310,6 +310,23 @@ def main():
     log.info("新增: %d, 替换: %d, 跳过: %d", added, replaced, len(to_skip))
     log.info("向量库总数: %d", collection.count())
 
+    # M3: 使 BM25 磁盘缓存失效，避免下次服务启动加载旧索引
+    _bm25_pkl = CHROMA_DIR / "bm25_index.pkl"
+    if _bm25_pkl.exists():
+        try:
+            _bm25_pkl.unlink()
+            log.info("BM25 缓存已失效 (bm25_index.pkl)")
+        except OSError as e:
+            log.warning("BM25 缓存清理失败: %s", e)
+
+    # M3: 使 BM25/实体索引失效, 下次检索自动重建 (评审 F1)
+    try:
+        from rag_core import invalidate_indexes
+        invalidate_indexes()
+        log.info("内存索引已失效 (invalidate_indexes)")
+    except Exception as e:
+        log.warning("invalidate_indexes 调用失败: %s", e)
+
 
 if __name__ == "__main__":
     main()

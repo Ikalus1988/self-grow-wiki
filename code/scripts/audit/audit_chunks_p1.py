@@ -7,6 +7,20 @@
 """
 
 import sys, json, re, time, pickle, hashlib
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 from collections import Counter, defaultdict
 sys.path.insert(0, '/mnt/c/Users/Eric Jia/self-grow-wiki')
 from rag_core import get_collection, _bm25_index
@@ -17,7 +31,7 @@ FLASH_KEY = _load_deepseek_key()
 FLASH_BASE = "https://api.llm.mioffice.cn/v1"
 FLASH_MODEL = "xiaomi/mimo-v2-flash"
 
-FLASH_LLM = OpenAI(api_key=_load_deepseek_key(), base_url=FLASH_BASE)
+FLASH_LLM = OpenAI(api_key=FLASH_KEY, base_url=FLASH_BASE)
 
 def flash_json(prompt, sys_msg="你是一个工业自动化文档审计专家。只输出JSON。"):
     for attempt in range(2):

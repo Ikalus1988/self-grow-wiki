@@ -8,6 +8,20 @@ Phase 2: 试卷生成复盘审计
 """
 
 import sys, json, re, time
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 sys.path.insert(0, '/mnt/c/Users/Eric Jia/self-grow-wiki')
 from rag_core import retrieve, _normalize_query, get_collection
 from openai import OpenAI

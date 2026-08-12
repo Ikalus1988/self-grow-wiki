@@ -222,6 +222,23 @@ def main():
     print(f"\n完成! 导入 {stats['ok']} 个文件, 跳过 {stats['skip']}, 失败 {stats['fail']}")
     print(f"向量库总量: {collection.count()}")
 
+    # M3: 使 BM25 磁盘缓存失效，避免下次服务启动加载旧索引
+    _bm25_pkl = CHROMA_DIR / "bm25_index.pkl"
+    if _bm25_pkl.exists():
+        try:
+            _bm25_pkl.unlink()
+            print("  BM25 缓存已失效 (bm25_index.pkl)")
+        except OSError as e:
+            print(f"  警告: BM25 缓存清理失败: {e}")
+
+    # M3: 使 BM25/实体索引失效, 下次检索自动重建 (评审 F1)
+    try:
+        from rag_core import invalidate_indexes
+        invalidate_indexes()
+        print("  内存索引已失效 (invalidate_indexes)")
+    except Exception as e:
+        print(f"  警告: invalidate_indexes 调用失败: {e}")
+
 
 if __name__ == "__main__":
     main()

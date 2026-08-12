@@ -9,6 +9,20 @@
 """
 
 import sys
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 import re
 import json
 import time
@@ -203,7 +217,7 @@ def llm_verify(claim: str, doc_answer: str, wiki_context: str) -> Dict:
 """
 
     from openai import OpenAI
-    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
     
     try:
         resp = client.chat.completions.create(

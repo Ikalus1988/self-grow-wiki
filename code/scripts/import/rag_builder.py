@@ -395,6 +395,24 @@ def build_vectordb(chunks):
         print(f"  [{end}/{total}] ({end*100//total}%)", flush=True)
 
     print(f"向量库构建完成: {collection.count()} vectors in '{COLLECTION_NAME}'")
+
+    # M3: 使 BM25 磁盘缓存失效，避免下次服务启动加载旧索引
+    _bm25_pkl = CHROMA_DIR / "bm25_index.pkl"
+    if _bm25_pkl.exists():
+        try:
+            _bm25_pkl.unlink()
+            print("  BM25 缓存已失效 (bm25_index.pkl)")
+        except OSError as e:
+            print(f"  警告: BM25 缓存清理失败: {e}")
+
+    # M3: 使 BM25/实体索引失效, 下次检索自动重建 (评审 F1)
+    try:
+        from rag_core import invalidate_indexes
+        invalidate_indexes()
+        print("  内存索引已失效 (invalidate_indexes)")
+    except Exception as e:
+        print(f"  警告: invalidate_indexes 调用失败: {e}")
+
     return collection
 
 

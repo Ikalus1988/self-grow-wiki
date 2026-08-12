@@ -9,6 +9,20 @@ v2 修复：
 """
 
 import sys
+# C1: 密钥改从环境变量 / ~/.hermes/.env 读取 (评审修复)
+import os as _os
+def _load_deepseek_key():
+    k = _os.environ.get('DEEPSEEK_API_KEY', '')
+    if k:
+        return k
+    p = _os.path.expanduser('~/.hermes/.env')
+    if _os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l.startswith('DEEPSEEK_API_KEY='):
+                return l.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
+
 import re
 import json
 import time
@@ -208,7 +222,7 @@ def _llm_verify_judgment(c: dict, wiki_context: str) -> Dict:
 """
     
     from openai import OpenAI
-    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
@@ -263,7 +277,7 @@ def _llm_verify_fill(c: dict, wiki_context: str) -> Dict:
 - 信息不全：知识库有但不精确，或答案不完整
 """
     from openai import OpenAI
-    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
@@ -303,7 +317,7 @@ def _llm_verify_generic(c: dict, wiki_context: str) -> Dict:
 }}
 """
     from openai import OpenAI
-    client = OpenAI(api_key=_load_deepseek_key(), base_url=DEEPSEEK_API)
+    client = OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_API)
     try:
         resp = client.chat.completions.create(
             model="deepseek-chat",
