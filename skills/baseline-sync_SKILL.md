@@ -77,11 +77,10 @@ python3 /mnt/d/MD/RAG知识库/scripts/baseline_sync.py status
 
 ## 安全红线
 
-- **含明文凭据的文件绝不入库**：`备注.txt`、`domains/reports/rag知识库演进记录.txt`
-  含 GitHub PAT（历史遗留），已被 .gitignore 排除。若新发现含 token/密钥的文件，
-  先加 .gitignore 再提交，并提醒用户撤销凭据。
+- **含明文凭据的文件绝不入库**（本机遗留的凭据文件已被 .gitignore 排除）。
+  若新发现含 token/密钥的文件，先加 .gitignore 再提交，并提醒用户撤销凭据。
 - 密钥读取一律走环境变量 / `~/.hermes/.env`，不硬编码。
-- 推送远端前先 `git ls-files | grep -E "备注|演进记录|token|key|secret"` 复查。
+- 推送远端前先 `git ls-files | grep -iE "token|secret|pat|\.env|credential"` 复查。
 
 ## 注意事项
 

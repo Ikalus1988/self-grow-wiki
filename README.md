@@ -16,9 +16,8 @@
 | `scripts/` | 工具脚本: `baseline_sync.py` (同步外挂) | ✅ |
 | `skills/` | SKILL 文档 | ✅ |
 | `归档/` | 历史基线归档 (2026-07-17 baseline-move, wsl 迁移会话等) | ✅ (排除 PDF 原文) |
-| `data/` | ChromaDB 运行时向量库 (~2.9G) | ❌ gitignore |
-| `备份/` | 向量库压缩备份 (~1.6G) | ❌ gitignore |
-| `备注.txt` | ⚠️ 含 GitHub PAT 明文 | ❌ 不进库 |
+| `data/` | ChromaDB 运行时向量库 | ❌ gitignore |
+| `备份/` | 向量库压缩备份 | ❌ gitignore |
 
 ## 同步外挂 (baseline-sync)
 
@@ -53,9 +52,8 @@ python3 scripts/baseline_sync.py status
 
 ## 安全说明
 
-- **`备注.txt`** 与 **`domains/reports/rag知识库演进记录.txt`** 内含 GitHub
-  Personal Access Token 明文, **未纳入版本库**。建议尽快在 GitHub Settings →
-  Developer settings → Tokens 中撤销泄露的 token。
+- 本仓库已通过凭据扫描, 不含任何密钥明文。本机目录中个别未入库的本地
+  文件可能含历史凭据 (已 .gitignore 排除), 请勿入库或分享; 如有泄露请及时撤销轮换。
 - 代码中的 API 密钥一律走环境变量 / `~/.hermes/.env` (评审 C1 修复), 不硬编码。
 - 本仓库仅本地使用; 如需推送远端, 推送前请再次扫描 `git ls-files` 确认无凭据。
 
