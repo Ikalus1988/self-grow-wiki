@@ -1,0 +1,37 @@
+# ============================================================
+# RAG 知识库基线 — .gitignore
+# 基线日期: 2026-08-12
+# ============================================================
+
+# ---- 运行时数据 (不进版本库) ----
+# ChromaDB 向量库 + 源 PDF + sqlite + 备份压缩包 (~2.9G)
+data/
+
+# 大体积备份 (1.6G 压缩向量库)
+备份/
+
+# ---- 敏感凭据 (⚠️ 含 GitHub PAT 明文, 绝不进版本库) ----
+# 备注.txt 内容为单行 GitHub PAT; 演进记录内含 ghp_ token
+备注.txt
+domains/reports/rag知识库演进记录.txt
+
+# ---- 大 PDF (保留 .PDF.md 转写, 原文不进库) ----
+*.pdf
+*.PDF
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
+*.swo
