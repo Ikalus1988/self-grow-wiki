@@ -25,24 +25,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("badcase_review")
 
-# ── 直接复用 kb_learning 的路径逻辑 ──────────────────────────────
-_HERE = Path(__file__).resolve().parent
-_AUDIT_DIR = _HERE / "Desktop" / "自研" / "rag-docs" / "audit_reports"
-_AUDIT_DIR_ALT = _HERE / "audit_reports"
-
-def _ensure_dir() -> Path:
-    for d in [_AUDIT_DIR, _AUDIT_DIR_ALT]:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-        except (OSError, PermissionError):
-            continue
-    return _AUDIT_DIR
-
-AUDIT_DIR = _ensure_dir()
-PENDING_FILE = AUDIT_DIR / "badcase_pending.jsonl"
-APPROVED_FILE = AUDIT_DIR / "badcase_approved.jsonl"
-REJECTED_FILE = AUDIT_DIR / "badcase_rejected.jsonl"
+# ── 直接复用 kb_learning 的路径常量（评审 M10 单一来源, 2026-08-11）──
+# 目录解析逻辑统一在 kb_learning: RAG_AUDIT_DIR env 优先 → ~/audit_reports
+from kb_learning import AUDIT_DIR, PENDING_FILE, APPROVED_FILE, REJECTED_FILE
 
 
 # ── JSONL 操作 ───────────────────────────────────────────────────

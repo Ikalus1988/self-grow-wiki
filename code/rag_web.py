@@ -15,6 +15,7 @@
 
 import argparse
 import logging
+import os
 
 import gradio as gr
 
@@ -352,9 +353,12 @@ def main():
         channel_mgr.check_all()
 
     print(f"\n启动 Web UI: http://localhost:{args.port}")
+    if args.share:
+        print("⚠️ 警告: --share 已启用, Gradio 将创建公网穿透链接 (评审 M9: 请仅限可信会话使用)")
     app = build_ui()
+    # 评审 M9: 默认只绑 127.0.0.1; 需要局域网访问时显式设 RAG_WEB_HOST=0.0.0.0
     app.launch(
-        server_name="0.0.0.0",
+        server_name=os.environ.get("RAG_WEB_HOST", "127.0.0.1"),
         server_port=args.port,
         share=args.share,
         theme=gr.themes.Soft(),

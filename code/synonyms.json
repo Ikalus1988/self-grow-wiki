@@ -345,5 +345,12 @@
   "TCPC": [
     "Tool Center Point Control",
     "工具中心点控制"
+  ],
+  "挠度": [
+    "挠曲",
+    "Deflection",
+    "deflection",
+    "Tip Deflection",
+    "Arm Deflection"
   ]
 }

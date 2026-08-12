@@ -30,3 +30,7 @@ audit_reports/
 *.rar
 *.zip
 *.exe
+
+# Legacy junk dirs (数据已迁移到 ~/audit_reports, 本地保留不进版本库)
+Desktop/
+archive/chat-logs/

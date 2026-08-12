@@ -8,6 +8,8 @@
   memory               同步项目 memory/ + MEMORY.md → 会话记忆/<project>/
   review <file...>     把评审文件复制到 评审/ (按 YYYY-MM-DD_项目_类型.md 命名)
   changelog <text...>  向 CHANGELOG.md 追加今日条目 (可多行)
+  code                 镜像同步主仓库 git 跟踪内容 → code/ (评审 F4)
+                       (自动跑验证门禁 scripts/verify_code_snapshot.py, 失败拒提交)
   commit [-m MSG]      git add -A + commit (默认消息: sync: 会话同步 <日期>)
   status               查看基线仓库状态
 
@@ -15,6 +17,7 @@
   python3 baseline_sync.py memory
   python3 baseline_sync.py review /tmp/foo-review.md --type security-review
   python3 baseline_sync.py changelog "修复 X" "新增 Y"
+  python3 baseline_sync.py code
   python3 baseline_sync.py commit -m "sync: 会话产出入库"
 """
 import argparse
@@ -36,6 +39,11 @@ REVIEW_TYPES = {
     "architecture-review": "architecture-review",
     "review-notes": "review-notes",
 }
+
+# code 同步: 主仓库跟踪但基线 code/ 不镜像的路径前缀 (memory 归 memory 子命令)
+CODE_EXCLUDE_PREFIXES = ("MEMORY.md", "memory/")
+# 基线自有的工具脚本, 镜像同步时保护不删
+CODE_KEEP = ("scripts/baseline_sync.py", "scripts/verify_code_snapshot.py")
 
 
 def run(cmd, cwd=None, check=True):
@@ -120,6 +128,63 @@ def cmd_changelog(lines):
     print(f"[ok] CHANGELOG.md 追加 {len(lines)} 条 ({today})")
 
 
+def cmd_code(project: str):
+    """镜像同步主仓库 git 跟踪内容 → 基线 code/ (评审 F4)。"""
+    src = Path(project)
+    if not src.exists() or not (src / ".git").exists():
+        print(f"[error] 主仓库路径无效: {src}")
+        sys.exit(1)
+    dst = BASE / "code"
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # 1. 主仓库 git 跟踪文件清单 (排除 memory/MEMORY.md)
+    r = run(["git", "-C", str(src), "ls-files"], check=True)
+    tracked = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    wanted = [ln for ln in tracked
+              if not ln.startswith(CODE_EXCLUDE_PREFIXES)]
+
+    # 2. 复制/更新每个文件
+    copied, updated = 0, 0
+    for rel in wanted:
+        s = src / rel
+        d = dst / rel
+        if not s.is_file():
+            continue
+        if d.exists() and d.read_bytes() == s.read_bytes():
+            continue
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(s, d)
+        copied += 1
+    print(f"[ok] code/ 同步: {copied} 个文件更新/新增")
+
+    # 3. 删除基线 code/ 中不再被主仓库跟踪的旧文件 (保护基线自有工具)
+    removed = 0
+    for d in sorted(dst.rglob("*")):
+        if not d.is_file():
+            continue
+        rel = d.relative_to(dst).as_posix()
+        if rel in CODE_KEEP:
+            continue
+        if rel not in tracked:
+            d.unlink()
+            removed += 1
+    if removed:
+        print(f"[ok] 清理 {removed} 个主仓库已不跟踪的旧文件")
+
+    # 4. 验证门禁: 失败则拒绝继续
+    gate = BASE / "scripts" / "verify_code_snapshot.py"
+    if gate.exists():
+        r = run(["python3", str(gate), str(dst)], check=False)
+        if r.returncode != 0:
+            print("\n[fail] 验证门禁未通过, 拒绝提交 code/ 同步")
+            print("       请修复后重新运行 'baseline_sync.py code'")
+            sys.exit(1)
+        print("[ok] 验证门禁通过")
+    else:
+        print(f"[warn] 未找到验证门禁 {gate}, 跳过")
+    print(f"[hint] 运行 'python3 baseline_sync.py commit' 提交")
+
+
 def cmd_commit(msg):
     today = datetime.date.today().strftime("%Y-%m-%d")
     m = msg or f"sync: 会话同步 {today}"
@@ -156,6 +221,7 @@ def main():
                           help="评审类型 (默认 code-review)")
     p_changelog = sub.add_parser("changelog", help="追加 CHANGELOG 条目")
     p_changelog.add_argument("lines", nargs="+", help="条目内容 (可多条)")
+    sub.add_parser("code", help="镜像同步主仓库代码 → code/ (评审 F4)")
     p_commit = sub.add_parser("commit", help="git add -A + commit")
     p_commit.add_argument("-m", "--message", default=None, help="提交信息")
     sub.add_parser("status", help="git status")
@@ -170,6 +236,8 @@ def main():
         cmd_review(args.files, Path(args.project).name, args.rtype)
     elif args.cmd == "changelog":
         cmd_changelog(args.lines)
+    elif args.cmd == "code":
+        cmd_code(args.project)
     elif args.cmd == "commit":
         cmd_commit(args.message)
     elif args.cmd == "status":

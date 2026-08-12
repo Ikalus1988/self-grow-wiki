@@ -6,6 +6,7 @@
 
 import argparse
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -23,7 +24,7 @@ from rag_core import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE,
     get_kb_stats, MIOFFICE_API_BASE, OLLAMA_BASE,
     log_query, get_query_logs, get_log_stats, get_token_stats,
-    estimate_tokens,
+    estimate_tokens, invalidate_indexes,
 )
 
 REPORT_PATH = Path(PATHS["conflict_report"])
@@ -472,6 +473,12 @@ def run_selfcheck_bg(limit):
 
     def _run():
         try:
+            # kb_selfcheck 位于 scripts/ 子目录，注入 sys.path（评审 M4）
+            import sys
+            from pathlib import Path as _P
+            _scripts = _P(__file__).resolve().parent / "scripts"
+            if str(_scripts) not in sys.path:
+                sys.path.insert(0, str(_scripts))
             from kb_selfcheck import run_selfcheck
             limit_val = int(limit) if limit else None
             report = run_selfcheck(limit=limit_val)
@@ -972,6 +979,8 @@ def _import_single_file(filepath: Path, category: str, subcategory: str,
             documents=[c["text"] for c in batch],
             metadatas=[c["metadata"] for c in batch],
         )
+    # M3: 入库成功后使 BM25/实体索引失效，运行中的服务无需重启即可检索新内容
+    invalidate_indexes()
     return len(chunks)
 
 
@@ -1188,9 +1197,12 @@ def main():
         channel_mgr.check_all()
 
     print(f"启动管理面板: http://localhost:{args.port}")
+    if args.share:
+        print("⚠️ 警告: --share 已启用, Gradio 将创建公网穿透链接 (评审 M9: 请仅限可信会话使用)")
     app = build_app()
+    # 评审 M9: 默认只绑 127.0.0.1; 需要局域网访问时显式设 RAG_ADMIN_HOST=0.0.0.0
     app.launch(
-        server_name="0.0.0.0",
+        server_name=os.environ.get("RAG_ADMIN_HOST", "127.0.0.1"),
         server_port=args.port,
         share=args.share,
         theme=gr.themes.Soft(),

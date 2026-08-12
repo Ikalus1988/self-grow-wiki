@@ -224,6 +224,11 @@ def _augment_query(query: str) -> str:
         aug_parts.append("伺服放大器 主电源模块 直流母线")
     if re.search(r'圆弧跟踪|焊缝跟踪|电弧跟踪|through[-\s]*arc|TAST', query, re.I):
         aug_parts.append("Through-Arc Tracking TAST 焊缝跟踪 电弧跟踪 弧焊")
+    # ponytail: 伺服焊枪 + 挠度/deflection → B-83264CM 手册术语锚点
+    if re.search(r'伺服焊枪|servo\s*gun', query, re.I):
+        aug_parts.append("B-83264CM 伺服焊枪 加压条件画面")
+    if re.search(r'(?i)(伺服焊枪|焊枪|servo\s*gun).*挠度|deflection', query):
+        aug_parts.append("焊枪挠曲补偿 加压条件画面 三维挠曲补偿 补偿值的设置方法")
 
     # 查询不含 FANUC/brand 关键词时，自动追加以锚定语义域
     if not re.search(r'(?i)fanuc|kuka|abb|yaskawa|kawasaki|发那科', query):
@@ -1088,6 +1093,17 @@ class BM25Index:
 _bm25_index = BM25Index()
 
 
+def invalidate_indexes():
+    """文档入库/更新后调用：使 BM25 索引与实体索引失效，下次检索自动重建。
+
+    评审 M3: 此前 ingest 路径只写 ChromaDB，BM25 内存索引与实体倒排索引
+    不失效，运行中的服务导入新文档后检索不到新内容，必须重启才生效。
+    """
+    global _entity_index_built
+    _bm25_index.invalidate()
+    _entity_index_built = False
+
+
 def _rrf_fusion(vector_results, bm25_results, existing_texts, k=BM25_RRF_K):
     """Reciprocal Rank Fusion — 融合向量和 BM25 排名.
 
@@ -1881,9 +1897,12 @@ def generate_answer(query, chunks, preferred="auto", temperature=DEFAULT_TEMPERA
     if _KB_LEARNING:
         scores = [c["score"] for c in chunks] if chunks else []
         top_s = max(scores) if scores else 0.0
-        query_id = kb_learning.log_query(
+        # 自学习记录：传入真实 sqlite_query_id 供 badcase 条目回指；
+        # 返回值保持真实 SQLite query_id（修复反馈链路 int(query_id) 断裂）
+        kb_learning.log_query(
             query=query, top_score=top_s, chunks_count=len(chunks),
-            channel=last_ch_name, answer_length=len(answer), model=last_ch_id
+            channel=last_ch_name, answer_length=len(answer), model=last_ch_id,
+            sqlite_query_id=sqlite_query_id
         )
 
     return answer, last_status, query_id

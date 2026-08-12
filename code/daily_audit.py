@@ -34,13 +34,15 @@ logging.basicConfig(
 logger = logging.getLogger("daily_audit")
 
 # ── 路径 ─────────────────────────────────────────────────────────────
+# 统一 audit 目录（评审 M10, 2026-08-11）: 单一来源 = kb_learning.AUDIT_DIR
+#   RAG_AUDIT_DIR env 优先 → ~/audit_reports（kb_learning 内解析, 与 badcase_review 一致）
+from kb_learning import AUDIT_DIR as _AUDIT_DIR
 _HERE = Path(__file__).resolve().parent
 _RAG_DOCS = Path(os.environ.get("RAG_DOCS_DIR", "/mnt/c/Users/hp/Desktop/自研/rag-docs"))
 _QUESTION_BANK = Path(os.environ.get(
     "RAG_QUESTION_BANK",
     str(_RAG_DOCS / "RAG巡检题库_200题_20260508.json"),
 ))
-_AUDIT_DIR = Path(os.environ.get("RAG_AUDIT_DIR", "/home/eric_jia/audit_reports"))
 _SYNONYM_FILE = _HERE / "synonyms.json"
 _BADCASE_MD = _RAG_DOCS / "badcase_汇总.md"
 
@@ -120,8 +122,11 @@ def sample_questions(bank: list, seed: int = None) -> list:
     rng = random.Random(seed)
 
     recent_qids = _load_recent_qids()
-    l2_all = [q for q in bank if q.get("level", "").upper() == "L2"]
-    l3_all = [q for q in bank if q.get("level", "").upper() != "L2"]
+    # 评审 M11: 真实题库 level 为 easy/medium（无 L2/L3），easy/L1/L2 → 基础层,
+    # medium/hard/L3/未知 → 提高层; 未知 level 归提高层, 不丢题
+    _BASIC_LEVELS = ("easy", "l1", "l2")
+    l2_all = [q for q in bank if str(q.get("level", "")).strip().lower() in _BASIC_LEVELS]
+    l3_all = [q for q in bank if str(q.get("level", "")).strip().lower() not in _BASIC_LEVELS]
     l2 = _exclude_recent_if_possible(l2_all, L2_COUNT, recent_qids)
     l3 = _exclude_recent_if_possible(l3_all, L3_COUNT, recent_qids)
 
@@ -169,7 +174,10 @@ def sample_questions(bank: list, seed: int = None) -> list:
 # ── API 调用 ─────────────────────────────────────────────────────────
 
 def call_rag(query_text: str, top_k: int = 3) -> dict:
-    """调用 RAG API，返回 {"answer": "...", "elapsed": N}."""
+    """调用 RAG API，返回 {"answer", "elapsed_s", "top_score", "error"}.
+
+    评审 M11: 解析 API 返回的 top_score（真实检索最高分），供判定纳入比对。
+    """
     payload = json.dumps({"query": query_text, "top_k": top_k}).encode("utf-8")
     t0 = time.time()
     try:
@@ -184,12 +192,14 @@ def call_rag(query_text: str, top_k: int = 3) -> dict:
         return {
             "answer": data.get("answer", ""),
             "elapsed_s": round(elapsed, 2),
+            "top_score": float(data.get("top_score") or 0),
         }
     except Exception as e:
         elapsed = time.time() - t0
         return {
             "answer": "",
             "elapsed_s": round(elapsed, 2),
+            "top_score": 0.0,
             "error": str(e),
         }
 
@@ -318,12 +328,17 @@ def run_audit(dry_run: bool = False, quiet: bool = False) -> dict:
 
         # 判断通过
         hit_keywords = [kw for kw in must_contain if kw.lower() in answer.lower()]
-        is_empty_kb = "知识库中未找到" in answer
+        # 评审 M11: 空库文案与 rag_api.py 对齐（"未找到与「…」相关的文档"），兼容旧文案
+        is_empty_kb = any(k in answer for k in ("未找到与", "知识库中未找到"))
         answer_ok = len(answer) >= MIN_ANSWER_LEN
         brand_contamination = check_brand_contamination(answer)
         keyword_hit = len(hit_keywords) > 0 if must_contain else True  # 无关键词要求时跳过
+        # 评审 M11: 真实检索最高分与 expect.min_top_score 比对（此前从未比对）
+        top_score = resp.get("top_score", 0)
+        score_ok = top_score >= min_score
 
-        ok = keyword_hit and answer_ok and not is_empty_kb and not brand_contamination
+        ok = (keyword_hit and answer_ok and score_ok
+              and not is_empty_kb and not brand_contamination)
 
         if ok:
             passed += 1
@@ -333,6 +348,8 @@ def run_audit(dry_run: bool = False, quiet: bool = False) -> dict:
                 reasons.append(f"未命中关键词 {must_contain}")
             if not answer_ok:
                 reasons.append(f"答案过短 ({len(answer)} < {MIN_ANSWER_LEN})")
+            if not score_ok:
+                reasons.append(f"检索分数不足 ({top_score:.2f} < {min_score:.2f})")
             if is_empty_kb:
                 reasons.append("知识库未覆盖")
             if brand_contamination:
@@ -342,6 +359,7 @@ def run_audit(dry_run: bool = False, quiet: bool = False) -> dict:
                 "query": query,
                 "must_contain": must_contain,
                 "min_score": min_score,
+                "top_score": top_score,
                 "reason": "; ".join(reasons),
                 "answer_length": len(answer),
             })
@@ -357,6 +375,8 @@ def run_audit(dry_run: bool = False, quiet: bool = False) -> dict:
             "query": query,
             "pass": ok,
             "hit_kws": hit_keywords,
+            "top_score": top_score,
+            "min_score": min_score,
             "brand_contamination": brand_contamination,
             "answer_length": len(answer),
             "elapsed_s": elapsed,

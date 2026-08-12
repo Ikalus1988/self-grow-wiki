@@ -5,7 +5,7 @@
 set -e
 
 export OLLAMA_MODELS="/mnt/d/ollama/models"
-export OLLAMA_HOST="0.0.0.0:11434"
+export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
 export PATH="$HOME/.local/bin:$PATH"
 export CUDA_VISIBLE_DEVICES=""
 

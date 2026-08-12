@@ -7,12 +7,13 @@
   GET  /health   健康检查
 """
 
+import os
 import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -38,6 +39,7 @@ class QueryResponse(BaseModel):
     status: str
     elapsed: float
     query_id: str = ""
+    top_score: float = 0.0  # 评审 M11: 检索最高分, 供 daily_audit 判定
 
 
 class FeedbackRequest(BaseModel):
@@ -80,6 +82,7 @@ def query(req: QueryRequest):
             sources=[],
             status="no_results",
             elapsed=time.time() - t0,
+            top_score=0.0,
         )
 
     # 检查相关度：如果最高分都很低，提示用户细化问题
@@ -110,6 +113,7 @@ def query(req: QueryRequest):
         status=status,
         elapsed=time.time() - t0,
         query_id=query_id,
+        top_score=best_score,
     )
 
 
@@ -286,4 +290,5 @@ def report(req: ReportRequest):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    # 评审 M9: 默认只绑 127.0.0.1; 需要局域网访问时显式设 RAG_API_HOST=0.0.0.0
+    uvicorn.run(app, host=os.environ.get("RAG_API_HOST", "127.0.0.1"), port=8002)

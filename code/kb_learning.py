@@ -30,22 +30,21 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ── 路径 ──────────────────────────────────────────────────────────────
-# 从 rag_core 同级目录出发
+# 统一 audit 目录（评审 M10, 2026-08-11）:
+#   RAG_AUDIT_DIR env 优先 → 默认 ~/audit_reports（daily_audit 真实数据所在）
+# 旧默认 _HERE/Desktop/自研/rag-docs/audit_reports 已废弃（仓库内垃圾目录）
 _HERE = Path(__file__).resolve().parent
-_AUDIT_DIR = _HERE / "Desktop" / "自研" / "rag-docs" / "audit_reports"
-
-# fallback: 如果 Windows 路径不存在，用同级 audit_reports
-_AUDIT_DIR_ALT = _HERE / "audit_reports"
+_AUDIT_DIR = Path(os.environ.get("RAG_AUDIT_DIR", str(Path.home() / "audit_reports")))
 
 def _ensure_audit_dir() -> Path:
-    d = _AUDIT_DIR
     try:
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    except (OSError, PermissionError):
-        d = _AUDIT_DIR_ALT
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        _AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+        return _AUDIT_DIR
+    except (OSError, PermissionError) as e:
+        logger.warning("audit dir 创建失败 %s, 回退仓库内 audit_reports: %s", _AUDIT_DIR, e)
+        alt = _HERE / "audit_reports"
+        alt.mkdir(parents=True, exist_ok=True)
+        return alt
 
 AUDIT_DIR = _ensure_audit_dir()
 
@@ -117,7 +116,8 @@ def _remove_from_jsonl(path: Path, pred_fn) -> list:
 # ── 公共 API ──────────────────────────────────────────────────────────
 
 def log_query(query: str, top_score: float = 0.0, chunks_count: int = 0,
-              channel: str = "", answer_length: int = 0, model: str = ""):
+              channel: str = "", answer_length: int = 0, model: str = "",
+              sqlite_query_id=None):
     """记录一条查询，自动检测是否需要进入 badcase 队列。
 
     由 rag_core.py generate_answer() 在每次 LLM 生成后调用。
@@ -130,6 +130,8 @@ def log_query(query: str, top_score: float = 0.0, chunks_count: int = 0,
       channel: 使用的 LLM 通道名
       answer_length: 生成答案的字符数
       model: 模型 ID
+      sqlite_query_id: SQLite query_log 中的真实 id；传入后 entry 保留回指字段，
+                       返回值优先用它（保证反馈链路 query_id 真实可 int()）
     """
     now = _now()
     entry = {
@@ -141,6 +143,8 @@ def log_query(query: str, top_score: float = 0.0, chunks_count: int = 0,
         "answer_length": answer_length,
         "model": model,
     }
+    if sqlite_query_id is not None:
+        entry["sqlite_query_id"] = sqlite_query_id
 
     # ── Bad Case 自动判定 ──
     reasons = []
@@ -173,7 +177,9 @@ def log_query(query: str, top_score: float = 0.0, chunks_count: int = 0,
     else:
         entry["badcase"] = False
 
-    # 返回一个标识符
+    # 返回标识符：有真实 SQLite id 时优先返回它，反馈链路才能 int(query_id)
+    if sqlite_query_id is not None:
+        return str(sqlite_query_id)
     return f"kb_{int(time.time())}"
 
 
@@ -248,17 +254,161 @@ def reject_badcase(pred_fn, reason: str = "") -> int:
 
 
 def get_stats() -> dict:
-    """返回学习统计。"""
+    """返回学习统计（兼容旧版消费方字段 + 新字段）。
+
+    旧版消费方（rag_admin._sl_overview / rag_api / rag_web）依赖:
+      total_queries / total_gaps / gap_rate / avg_score /
+      total_feedback / total_faq / top_gaps
+    """
     pending = get_pending_badcases()
     approved = get_approved_badcases()
     rejected = get_rejected_badcases()
+    total_queries, avg_score = _sqlite_query_stats()
+    fb_items = _read_jsonl(_FEEDBACK_LOG)
+
+    # Top 知识缺口：pending 队列中的重复查询
+    qcount: dict = {}
+    for it in pending:
+        q = (it.get("query") or "").strip()
+        if q:
+            qcount[q] = qcount.get(q, 0) + 1
+    top_gaps = sorted(qcount.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    total_gaps = len(pending)
+    total_faq = len(get_faq_pairs(limit=100))
+
     return {
         "pending_count": len(pending),
         "approved_count": len(approved),
         "rejected_count": len(rejected),
         "pending_items": pending[-20:] if pending else [],
         "last_updated": _now(),
+        # ── 兼容旧版消费方字段 ──
+        "total_queries": total_queries,
+        "total_gaps": total_gaps,
+        "gap_rate": round(total_gaps / total_queries * 100, 1) if total_queries else 0,
+        "avg_score": avg_score,
+        "total_feedback": len(fb_items),
+        "total_faq": total_faq,
+        "top_gaps": top_gaps,
     }
+
+
+def _sqlite_query_stats() -> tuple:
+    """从 SQLite query_log 读统计（函数内延迟导入，避免循环依赖）。
+
+    返回 (total_queries, avg_top_score)；读取失败时返回 (0, 0.0)。
+    """
+    try:
+        from rag_core import QUERY_LOG_DB
+        import sqlite3
+        conn = sqlite3.connect(str(QUERY_LOG_DB), timeout=5)
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM query_log").fetchone()[0]
+            row = conn.execute(
+                "SELECT AVG(top_score) FROM query_log WHERE top_score IS NOT NULL"
+            ).fetchone()
+            avg = float(row[0]) if row and row[0] is not None else 0.0
+        finally:
+            conn.close()
+        return int(total), round(avg, 4)
+    except Exception:
+        return 0, 0.0
+
+
+def get_gaps(limit: int = 50) -> list:
+    """知识缺口列表：badcase 队列中未处理的低质量检索。
+
+    兼容旧版消费方：rag_admin._sl_gaps / rag_api.learning_gaps / rag_web.show_gaps。
+    每项: {'datetime', 'query', 'top_score', 'chunks_count'}
+    """
+    items = get_pending_badcases()
+    items.sort(key=lambda x: x.get("ts", ""), reverse=True)
+    return [
+        {
+            "datetime": it.get("ts", ""),
+            "query": it.get("query", ""),
+            "top_score": it.get("top_score", 0.0),
+            "chunks_count": it.get("chunks_count", 0),
+        }
+        for it in items[:limit]
+    ]
+
+
+def get_feedback_summary(days: int = 7) -> dict:
+    """反馈汇总（兼容旧版消费方 up/down 语义）。
+
+    返回: {'period_days', 'up', 'down', 'satisfaction_rate', 'down_queries'}
+    """
+    cutoff = (datetime.now().timestamp() - days * 86400)
+    items = []
+    for it in _read_jsonl(_FEEDBACK_LOG):
+        try:
+            ts = datetime.strptime(it.get("ts", ""), "%Y-%m-%d %H:%M:%S")
+            if ts.timestamp() >= cutoff:
+                items.append(it)
+        except (ValueError, TypeError):
+            continue
+    up = sum(1 for r in items if r.get("feedback") in ("good", "up"))
+    down = sum(1 for r in items if r.get("feedback") in ("bad", "down"))
+    total = up + down
+    return {
+        "period_days": days,
+        "up": up,
+        "down": down,
+        "satisfaction_rate": round(up / total * 100, 1) if total else 0,
+        "down_queries": [
+            {
+                "query": r.get("query", ""),
+                "comment": r.get("note", ""),
+                "datetime": r.get("ts", ""),
+            }
+            for r in items if r.get("feedback") in ("bad", "down")
+        ][-20:],
+    }
+
+
+def get_faq_pairs(limit: int = 50) -> list:
+    """自动沉淀 FAQ：聚合用户 👍 反馈中出现过的高频查询。
+
+    每项: {'query', 'hit_count', 'datetime'}
+    """
+    counts: dict = {}
+    last_ts: dict = {}
+    for it in _read_jsonl(_FEEDBACK_LOG):
+        if it.get("feedback") not in ("good", "up"):
+            continue
+        q = (it.get("query") or "").strip()
+        if not q:
+            continue
+        counts[q] = counts.get(q, 0) + 1
+        last_ts[q] = it.get("ts", "")
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    return [
+        {"query": q, "hit_count": c, "datetime": last_ts.get(q, "")}
+        for q, c in ranked[:limit]
+    ]
+
+
+def generate_report() -> str:
+    """自学习自检报告（文本）。"""
+    stats = get_stats()
+    lines = [
+        "# 自学习自检报告",
+        f"- 生成时间: {_now()}",
+        f"- 总查询数: {stats.get('total_queries', 0)}",
+        f"- 知识缺口: {stats.get('total_gaps', 0)}（待审 {stats.get('pending_count', 0)}）",
+        f"- 平均检索分: {stats.get('avg_score', 0)}",
+        f"- 用户反馈: {stats.get('total_feedback', 0)}",
+        f"- 沉淀FAQ: {stats.get('total_faq', 0)}",
+    ]
+    gaps = get_gaps(limit=10)
+    if gaps:
+        lines.append("\n## Top 知识缺口")
+        for g in gaps:
+            lines.append(f"- [{g['datetime']}] {g['query'][:60]} (score={g['top_score']})")
+    else:
+        lines.append("\n## 知识缺口\n无")
+    return "\n".join(lines)
 
 
 def export_badcase_report(output_path: str = "") -> str:

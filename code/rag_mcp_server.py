@@ -260,7 +260,9 @@ def rag_answer(query: str) -> str:
         try:
             answer = _llm_generate(system_prompt, user_prompt)
             if answer.strip():
-                return answer
+                # Guard: 清理 think 块 / 反问截断 / 缺来源标注（此前从未被调用）
+                cleaned, _violations = guard_response(answer)
+                return cleaned
         except Exception as e:
             pass  # fallback 到纯检索
 
