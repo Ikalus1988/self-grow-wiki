@@ -3,7 +3,7 @@
 
 baseline_sync.py code 同步后必须通过本门禁, 否则拒绝提交:
 1. 所有 .py 文件可编译 (py_compile)
-2. 无硬编码密钥残留 (FLASH_KEY/DEEPSEEK_KEY/api_key = "长串")
+2. 密钥扫描: 调用 gitleaks (业界标准, 规则见 scripts/gitleaks.toml)
 3. 调用 _load_deepseek_key 的文件必须定义该函数 (防 f348c9d 同类事故)
 4. scripts/import/ 4 个 CLI 灌库脚本必须含 invalidate_indexes hook (评审 F1)
 
@@ -13,15 +13,12 @@ baseline_sync.py code 同步后必须通过本门禁, 否则拒绝提交:
 """
 import pathlib
 import py_compile
-import re
+import shutil
+import subprocess
 import sys
 
 DEFAULT_CODE = pathlib.Path("/mnt/d/MD/RAG知识库/code")
-AK = "api" + "_key"  # 避免触发显示层脱敏
-
-# 硬编码密钥形态: 变量赋值 (FLASH_KEY = "sk-...") 或内联 (api_key="sk-...")
-PAT_ASSIGN = re.compile(r'(FLASH_KEY|DEEPSEEK_KEY)\s*=\s*"[^"]{16,}"')
-PAT_INLINE = re.compile(AK + r'\s*=\s*"[^"]{16,}"')
+DEFAULT_TOML = pathlib.Path("/mnt/d/MD/RAG知识库/scripts/gitleaks.toml")
 
 # 评审 F1: 必须含 invalidate_indexes hook 的 CLI 灌库脚本 (相对 code/)
 F1_SCRIPTS = [
@@ -30,6 +27,35 @@ F1_SCRIPTS = [
     "scripts/import/rag_builder_ocr.py",
     "scripts/import/rag_import_fanuc.py",
 ]
+
+
+def gitleaks_bin() -> str:
+    """定位 gitleaks 可执行文件。"""
+    p = shutil.which("gitleaks")
+    if p:
+        return p
+    home = pathlib.Path.home() / ".local" / "bin" / "gitleaks"
+    if home.exists():
+        return str(home)
+    return ""
+
+
+def scan_gitleaks(code: pathlib.Path, toml: pathlib.Path) -> tuple:
+    """调用 gitleaks dir 扫描目录, 返回 (是否通过, 错误信息列表)。"""
+    exe = gitleaks_bin()
+    if not exe:
+        return False, ["  gitleaks 未安装: 请安装 (https://github.com/gitleaks/gitleaks) 后重试"]
+    cmd = [exe, "dir", str(code), "--config", str(toml),
+           "--no-banner", "--redact=0", "--exit-code=1"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    leaks = proc.returncode != 0
+    errs = []
+    if leaks:
+        errs.append("  gitleaks 发现密钥残留, 详情:")
+        for line in proc.stderr.splitlines():
+            if "INF" not in line and "WRN" not in line and line.strip():
+                errs.append("    " + line.strip())
+    return not leaks, errs
 
 
 def main() -> int:
@@ -56,24 +82,19 @@ def main() -> int:
     else:
         print(f"[ok] py_compile: {len(py_files)} 个文件全部通过")
 
-    # 2. 密钥残留扫描 (排除 .git 与 __pycache__)
-    key_files = [f for f in code.rglob("*.py")
+    # 2. gitleaks 密钥扫描 (成熟方案, 替代手写正则)
+    src_files = [f for f in code.rglob("*.py")
                  if ".git" not in f.parts and "__pycache__" not in f.parts]
-    total_key_hits = 0
-    for f in key_files:
-        src = f.read_text(encoding="utf-8", errors="replace")
-        hits = len(PAT_ASSIGN.findall(src)) + len(PAT_INLINE.findall(src))
-        if hits:
-            total_key_hits += hits
-            errors.append(f"  密钥残留 {hits} 处: {f.relative_to(code)}")
-    if total_key_hits:
-        print(f"[FAIL] 密钥残留: {total_key_hits} 处")
+    ok, gitleak_errs = scan_gitleaks(code, DEFAULT_TOML)
+    if ok:
+        print(f"[ok] gitleaks: {len(src_files)} 个源文件无密钥残留")
     else:
-        print(f"[ok] 密钥残留: 0 处")
+        errors.extend(gitleak_errs)
+        print("[FAIL] gitleaks: 发现密钥残留")
 
     # 3. _load_deepseek_key 调用-定义一致性 (防 f348c9d 事故)
     inconsistent = 0
-    for f in key_files:
+    for f in src_files:
         src = f.read_text(encoding="utf-8", errors="replace")
         calls = src.count("_load_deepseek_key()")
         has_def = "def _load_deepseek_key" in src
