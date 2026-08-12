@@ -2,6 +2,12 @@
 
 ## [2026-08-12] — 2026-08-12
 
+- 新增 baseline-sync skill (会话同步外挂, .agents/skills/baseline-sync-1.0.0)
+- README 更新评审约定与同步外挂说明
+
+
+## [2026-08-12] — 2026-08-12
+
 - 新增基线同步工具 scripts/baseline_sync.py
 - 评审文件统一归档至 评审/ 目录
 
