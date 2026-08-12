@@ -13,7 +13,7 @@
 | `rag-docs/` | RAG 知识文档: concepts/entities/queries/raw (含 FANUC 手册 .PDF.md 转写) | ✅ (排除 PDF 原文) |
 | `评审/` | 评审报告, 命名 `YYYY-MM-DD_<项目>_<类型>.md` | ✅ |
 | `会话记忆/<project>/` | 项目 memory 快照 (由同步脚本维护) | ✅ |
-| `scripts/` | 工具脚本: `baseline_sync.py` (同步外挂) | ✅ |
+| `scripts/` | 工具脚本: `baseline_sync.py` (同步外挂) + `verify_code_snapshot.py` (门禁) + `gitleaks.toml` (密钥扫描规则) | ✅ |
 | `skills/` | SKILL 文档 | ✅ |
 | `归档/` | 历史基线归档 (2026-07-17 baseline-move, wsl 迁移会话等) | ✅ (排除 PDF 原文) |
 | `data/` | ChromaDB 运行时向量库 | ❌ gitignore |
@@ -43,7 +43,21 @@ python3 scripts/baseline_sync.py status
 对应 agent 技能: `.agents/skills/baseline-sync-1.0.0/SKILL.md`（触发词: 同步基线 /
 归档评审 / 更新 changelog / 会话记忆）。其他项目: `--project /path/to/project`。
 
+## 检索系统依赖 (BM25 混合检索)
+
+RAG 检索 (`rag_core.py`) 依赖以下包, **缺失时 BM25 检索静默降级为纯向量路径**,
+表格类规格数据 (规格一览表/参数表) 将无法召回 (2026-08-13 M-900iB/330L 事件:
+依赖缺失 → 检索不到规格表 → 误判"型号不存在"):
+
+```bash
+pip install jieba rank-bm25
+```
+
+- 验证 BM25 已加载: 检索日志出现 `BM25 索引已从缓存加载: N chunks`
+- 检索修复与根因详见: `评审/2026-08-13_self-grow-wiki_review-notes-330l-retrieval.md`
+
 ## 评审约定
+
 
 - 评审产出统一放 `评审/` 目录, 命名 `YYYY-MM-DD_<项目>_<类型>.md`
   (类型: code-review / security-review / design-review / architecture-review / review-notes)。

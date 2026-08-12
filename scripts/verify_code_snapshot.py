@@ -4,7 +4,7 @@
 baseline_sync.py code 同步后必须通过本门禁, 否则拒绝提交:
 1. 所有 .py 文件可编译 (py_compile)
 2. 密钥扫描: 调用 gitleaks (业界标准, 规则见 scripts/gitleaks.toml)
-3. 调用 _load_deepseek_key 的文件必须定义该函数 (防 f348c9d 同类事故)
+3. 调用 _load_deepseek_key 的文件必须定义或 from-import 该函数 (防 f348c9d 同类事故)
 4. scripts/import/ 4 个 CLI 灌库脚本必须含 invalidate_indexes hook (评审 F1)
 
 用法: python3 scripts/verify_code_snapshot.py [code 目录]
@@ -98,11 +98,12 @@ def main() -> int:
         src = f.read_text(encoding="utf-8", errors="replace")
         calls = src.count("_load_deepseek_key()")
         has_def = "def _load_deepseek_key" in src
-        if calls > 0 and not has_def:
+        has_import = "import _load_deepseek_key" in src  # from x import ... 亦命中
+        if calls > 0 and not has_def and not has_import:
             inconsistent += 1
-            errors.append(f"  调用无定义: {f.relative_to(code)} (调用 {calls} 处)")
+            errors.append(f"  调用无定义/无导入: {f.relative_to(code)} (调用 {calls} 处)")
     if inconsistent:
-        print(f"[FAIL] helper 一致性: {inconsistent} 个文件调用 _load_deepseek_key 但无定义")
+        print(f"[FAIL] helper 一致性: {inconsistent} 个文件调用 _load_deepseek_key 但无定义/无导入")
     else:
         print(f"[ok] helper 一致性: 全部有调用必有定义")
 

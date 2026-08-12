@@ -377,6 +377,7 @@ A:"<think>...</think>" ← 禁止think块!
 5. 检索不全:先给有的，再说"以下未覆盖:xxx"，不编造
 5a. ★严禁用训练知识补检索缺口★：当所有检索片段与问题不相关时，禁止用预训练知识"补"出答案。必须明确写出"以下未覆盖:xxx"并停笔。
 5b. ★章节缺失禁写：未带章节/页码的事实不得写入正文（如"PROFINET IRT 延迟<1ms"）。若推理无源，立即停笔。ponytail: 防 LLM 用预训练知识补 RAG 缺口(2026-07-27 62 题复盘 C03 实例)。
+5c. ★禁否定存在性：当用户询问某型号/规格/参数而检索片段缺失或低相关时，禁止写"XX 不存在/没有/未推出"。必须写"知识库未覆盖 XX 的 [属性]"，并列出已检索到的相关片段标题供用户人工核实(2026-08-12 M-900iB/330L 实例: RAG 召回 0 ≠ 型号不存在)。
 6. 多手册描述不一致:列出差异+各自来源
 7. DI[n]/DO[n]=I/O信号 ≠ 系统变量(VR文件)，概念不同，禁止混淆
 
@@ -1182,6 +1183,7 @@ def retrieve(query: str, top_k: int = DEFAULT_TOP_K, log_channel: str = ""):
     return result
 
 
+
 def _retrieve_single(query: str, top_k: int):
     _t0 = time.time()
     collection = get_collection()
@@ -1321,20 +1323,45 @@ def _retrieve_single(query: str, top_k: int):
         _t_variant_kw = time.time()
         for v in model_variants[:3]:
             try:
-                kw = collection.get(
-                    where_document={"$contains": v}, limit=8,
-                    include=["documents", "metadatas"],
-                )
-                for doc, meta in zip(kw["documents"], kw["metadatas"]):
-                    if doc not in existing_texts:
-                        score = 0.88 if v.upper() in doc[:300].upper() else 0.72
-                        c = _build_chunk_v2(doc, meta, score)
-                        c["_variant_kw"] = v
-                        chunks.append(c)
-                        existing_texts.add(doc)
+                # ponytail: 用 BM25 内存索引做精确子串匹配 (2026-08-12 330L 事件:
+                # ChromaDB $contains 的 FTS 把 "330L" 分词为 "330"+"L", 单字符 "L" 大量误匹配,
+                # 规格表被误匹配 chunk 同分挤出。BM25 docs 是原始文本, v in doc 精确可靠)。
+                _cands = []
+                if _bm25_index._loaded:
+                    for doc, meta in zip(_bm25_index.docs, _bm25_index.metas):
+                        if v in doc and doc not in existing_texts:
+                            _pos = doc.upper().find(v.upper())
+                            _boost = 0.25 if _pos < 300 else 0.05  # 型号在前部权重高
+                            if any(w in doc for w in ("规格", "参数", "动作速度", "可搬运")):
+                                _boost += 0.10
+                            _c = _build_chunk_v2(doc, meta, min(0.88 + _boost, 0.99))
+                            _c["_variant_kw"] = v
+                            _cands.append(_c)
+                else:
+                    # 回退: ChromaDB $contains (tokenization 可能误匹配, 尽力而为)
+                    kw = collection.get(
+                        where_document={"$contains": v}, limit=50,
+                        include=["documents", "metadatas"],
+                    )
+                    for doc, meta in zip(kw["documents"], kw["metadatas"]):
+                        if doc not in existing_texts:
+                            _pos = doc.upper().find(v.upper())
+                            _boost = 0.25 if _pos >= 0 and _pos < 300 else 0.05
+                            if any(w in doc for w in ("规格", "参数", "动作速度", "可搬运")):
+                                _boost += 0.10
+                            _c = _build_chunk_v2(doc, meta, min(0.88 + _boost, 0.99))
+                            _c["_variant_kw"] = v
+                            _cands.append(_c)
+                # 同分时含速度词优先 (规格表 vs 型号清单页)
+                _cands.sort(key=lambda c: (c["score"],
+                                           1 if ("速度" in c["text"] or "动作速度" in c["text"]) else 0),
+                            reverse=True)
+                for _c in _cands[:4]:
+                    chunks.append(_c)
+                    existing_texts.add(_c["text"])
             except Exception:
                 pass
-        logger.info(f"[TIMING] variant $contains: {time.time()-_t_variant_kw:.2f}s (variants={model_variants})")
+        logger.info(f"[TIMING] variant kw: {time.time()-_t_variant_kw:.2f}s (variants={model_variants})")
 
     # ── 二级分类补充搜索 ──
     if target_l2:
@@ -1450,7 +1477,11 @@ def _retrieve_single(query: str, top_k: int):
     if model_series:
         # 如果现有结果已有高分命中，跳过型号遍历节省时间
         existing_best = max((c["score"] for c in chunks), default=0)
-        if existing_best < 0.85:
+        # ponytail: 向量高分≠好答案 (搬运页/连接图亦 0.98, 但缺规格内容)。
+        # 现有结果不含规格表内容时, 即使分数高也执行型号精确搜索补全 (2026-08-12 330L 事件)
+        _has_spec = any(("规格一览" in c["text"]) or ("最大动作速度" in c["text"])
+                        or ("可搬运重量" in c["text"]) for c in chunks)
+        if existing_best < 0.85 or not _has_spec:
             for model in model_series[:3]:
                 model_files = _get_model_files(collection, model)
                 # 品牌过滤：查询含 FANUC 时，排除明显非 FANUC 的文档（如 KUKA Series 2000）
@@ -1560,6 +1591,13 @@ def _retrieve_single(query: str, top_k: int):
     # 按分数降序排序
     chunks.sort(key=lambda c: c["score"], reverse=True)
 
+    # ponytail: 精确型号匹配 (variant) 结果前置, 防被通用高分 chunk 挤出 (330L 事件:
+    # 规格表 0.97 被同文件搬运页 0.98 挤掉)。用户明确问的型号 > 通用相似。
+    if any(c.get("_variant_kw") for c in chunks):
+        _var = [c for c in chunks if c.get("_variant_kw")]
+        _rest = [c for c in chunks if not c.get("_variant_kw")]
+        chunks = _var + _rest
+
     # ── 报警代码精确匹配加分 ──
     # 当查询含报警代码时，对文本中包含该代码的 chunk 加分，确保精确匹配排在语义相似结果前面
     alarm_codes = _ALARM_CODE_RE.findall(query)
@@ -1583,6 +1621,13 @@ def _retrieve_single(query: str, top_k: int):
     chunks = _rerank_chunks(query, chunks)
     logger.info(f"[TIMING] rerank: {time.time()-_t_rerank:.2f}s ({len(chunks)} chunks)")
 
+    # ponytail: rerank 会打乱精确型号匹配(variant)的前置, 这里重新前置 (330L 事件:
+    # 规格表是表格文本, cross-encoder 分低会被重排到后, 但它是用户明确问的型号)
+    if any(c.get("_variant_kw") for c in chunks):
+        _var = [c for c in chunks if c.get("_variant_kw")]
+        _rest = [c for c in chunks if not c.get("_variant_kw")]
+        chunks = _var + _rest
+
     # ponytail: merge SAG entity results BEFORE diversity filter so entity-exact
     # chunks aren't pushed out of top_k by vector-only chunks
     if _sag_merged:
@@ -1595,11 +1640,26 @@ def _retrieve_single(query: str, top_k: int):
         chunks = _merged + chunks
 
     # 文件多样性：同一文件最多保留 max_per_file 个 chunk，确保覆盖更多文件
-    max_per_file = 3 if model_series else top_k
+    max_per_file = 5 if model_series else top_k  # 型号查询保留规格表等多章节
     if max_per_file < top_k:
-        selected = []
+        # ponytail: 330L 事件 — 规格表可能仅 BM25 命中 (RRF 排名低) 无 _variant_kw 标记,
+        # rerank 后排后, 单遍遍历 break 前未轮到它。两遍扫描:
+        # 1) 先收集豁免 chunk (型号变体/规格一览/动作速度), 按"含速度词"排序取前 top_k
+        # 2) 再补普通 chunk 到 max_per_file/文件
+        _spec_kw = list(model_variants) + ["规格一览", "动作速度"]
+        _exempt = [c for c in chunks
+                   if c.get("_variant_kw") or any(w in c["text"] for w in _spec_kw)]
+        # 排序: 含速度/动作速度词的规格表优先于 score (rerank 可能覆盖 variant 分数,
+        # 表格文本 cross-encoder 分低, 330L 事件)
+        _exempt.sort(key=lambda c: (1 if ("速度" in c["text"] or "动作速度" in c["text"]) else 0,
+                                    c["score"]),
+                     reverse=True)
+        selected = list(_exempt[:top_k])
+        selected_ids = {id(c) for c in selected}
         file_count = {}
         for c in chunks:
+            if id(c) in selected_ids:
+                continue
             fn = c["filename"]
             file_count[fn] = file_count.get(fn, 0) + 1
             if file_count[fn] <= max_per_file:
@@ -1607,8 +1667,6 @@ def _retrieve_single(query: str, top_k: int):
             if len(selected) >= top_k:
                 break
         chunks = selected
-    else:
-        chunks = chunks[:top_k]
 
     # 话题补充槽位保留：确保至少 2 个话题补充 chunk 进入最终结果
     if _topic_chunks:
