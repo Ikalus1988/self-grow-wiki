@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# RAG runtime data
+rag_chromadb/
+audit_reports/
+*.pkl
+
+# Large files
+*.rar
+*.zip
+*.exe
+
+# Legacy junk dirs (数据已迁移到 ~/audit_reports, 本地保留不进版本库)
+Desktop/
+archive/chat-logs/

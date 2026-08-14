@@ -1,0 +1,35 @@
+# gitleaks 配置: 默认规则 + 项目自定义规则
+# 用法: gitleaks git --path=<repo> --config=scripts/gitleaks.toml
+
+[extend]
+useDefault = true
+
+# 飞书(Feishu/Lark) 应用密钥: app_secret 后跟 16-64 位 base64 风格字符串
+[[rules]]
+id = "lark-app-secret"
+description = "Lark (Feishu) App Secret"
+regex = '''app_secret\s*[=:]\s*["']?([A-Za-z0-9+/=]{16,64})["']?'''
+secretGroup = 1
+entropy = 3.5
+
+# 中文文档中常见的 密钥/密码 明文声明
+[[rules]]
+id = "cn-secret-declaration"
+description = "Chinese secret declaration (密钥/密码 明文)"
+regex = '''(?:密钥|密码|secret|password)\s*[=:：]\s*([A-Za-z0-9+/_\-=]{16,64})'''
+secretGroup = 1
+entropy = 4.0
+
+# 常见占位符不要误报为泄露
+[allowlist]
+description = "allowlisted files and placeholders"
+regexTarget = "line"
+regexes = [
+  '''REPLACED''',
+  '''[Rr]edacted''',
+  '''xxxxx''',
+  '''<secret>''',
+  '''YOUR_''',
+  '''example''',
+  '''changeme''',
+]

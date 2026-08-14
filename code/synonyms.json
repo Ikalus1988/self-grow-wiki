@@ -1,0 +1,356 @@
+{
+  "_meta": "FANUC RAG 同义词表 — 用于 expand_query 自动扩展检索。巡检发现语义鸿沟时自动追加条目",
+  "_version": "2026-05-20",
+  "报警": [
+    "alarm",
+    "故障代码",
+    "error code",
+    "异常",
+    "故障"
+  ],
+  "伺服": [
+    "servo",
+    "驱动",
+    "放大器",
+    "伺服放大器",
+    "servo amplifier",
+    "servo amp"
+  ],
+  "零点标定": [
+    "零点校准",
+    "零位",
+    "mastering",
+    "MASTER_ENBL",
+    "MASTER_COUN"
+  ],
+  "示教器": [
+    "TP",
+    "teach pendant",
+    "编程器"
+  ],
+  "编码器": [
+    "encoder",
+    "脉冲编码器",
+    "脉冲发生器"
+  ],
+  "急停": [
+    "紧急停止",
+    "emergency stop",
+    "E-stop"
+  ],
+  "安全门": [
+    "安全围栏",
+    "安全栅",
+    "safety gate",
+    "安全锁"
+  ],
+  "保险丝": [
+    "fuse",
+    "熔断器",
+    "FUSE"
+  ],
+  "制动器": [
+    "刹车",
+    "brake",
+    "抱闸"
+  ],
+  "变位机": [
+    "外部轴",
+    "positioner",
+    "翻转台"
+  ],
+  "总线": [
+    "PROFINET",
+    "EtherNet/IP",
+    "CC-Link",
+    "CCLink",
+    "CC Link",
+    "现场总线",
+    "fieldbus"
+  ],
+  "CC-Link": [
+    "CCLink",
+    "CC Link",
+    "CCLINK",
+    "现场总线",
+    "终端电阻",
+    "CRC"
+  ],
+  "IO": [
+    "输入输出",
+    "input output",
+    "信号",
+    "I/O",
+    "RI/O",
+    "RO",
+    "RI",
+    "DI",
+    "DO"
+  ],
+  "TCP": [
+    "工具坐标系",
+    "tool center point",
+    "工具中心点"
+  ],
+  "坐标系": [
+    "frame",
+    "坐标系统",
+    "坐标"
+  ],
+  "负载": [
+    "payload",
+    "负荷",
+    "载重"
+  ],
+  "惯量": [
+    "inertia",
+    "转动惯量"
+  ],
+  "程序": [
+    "program",
+    "programe",
+    "程式",
+    "代码"
+  ],
+  "焊接": [
+    "welding",
+    "焊",
+    "弧焊",
+    "点焊",
+    "焊缝",
+    "起弧",
+    "断弧",
+    "焊缝跟踪",
+    "Through-Arc Tracking",
+    "TAST"
+  ],
+  "焊缝跟踪": [
+    "圆弧跟踪",
+    "电弧跟踪",
+    "Through-Arc Tracking",
+    "TAST",
+    "arc tracking",
+    "through arc",
+    "弧焊跟踪"
+  ],
+  "安全": [
+    "safety",
+    "安全功能",
+    "安全回路"
+  ],
+  "散热": [
+    "冷却",
+    "风扇",
+    "thermal",
+    "温度"
+  ],
+  "电池": [
+    "battery",
+    "蓄电池"
+  ],
+  "电缆": [
+    "cable",
+    "线缆",
+    "动力线"
+  ],
+  "调试": [
+    "commissioning",
+    "tuning",
+    "调整",
+    "设定"
+  ],
+  "复位": [
+    "重置",
+    "reset",
+    "恢复"
+  ],
+  "超程": [
+    "OT",
+    "over travel",
+    "超行程"
+  ],
+  "手册": [
+    "manual",
+    "说明书",
+    "文档",
+    "B-"
+  ],
+  "型号": [
+    "model",
+    "机型",
+    "规格"
+  ],
+  "参数": [
+    "parameter",
+    "参数设定",
+    "设置"
+  ],
+  "故障排除": [
+    "troubleshooting",
+    "问题排查",
+    "诊断"
+  ],
+  "维护": [
+    "保养",
+    "maintenance",
+    "检查"
+  ],
+  "诊断": [
+    "diagnosis",
+    "diagnostic",
+    "自检"
+  ],
+  "协作机器人": [
+    "cobot",
+    "CR系列",
+    "协同作业",
+    "协同作业机器人",
+    "collaborative robot"
+  ],
+  "DCS": [
+    "双检安全",
+    "dual check safety",
+    "安全速度",
+    "安全区域",
+    "安全参数",
+    "safety speed",
+    "safety zone"
+  ],
+  "工具坐标系": [
+    "TCP切换",
+    "UT",
+    "UTOOL",
+    "tool frame",
+    "多工具",
+    "工具切换"
+  ],
+  "干伸长度": [
+    "stick-out",
+    "stickout",
+    "焊丝伸出量",
+    "contact tip to work",
+    "伸出长度"
+  ],
+  "起弧": [
+    "arc start",
+    "引弧",
+    "起弧失败",
+    "起弧参数"
+  ],
+  "收弧": [
+    "arc end",
+    "熄弧",
+    "收弧参数",
+    "填弧坑"
+  ],
+  "报警处理方法": [
+    "报警排查",
+    "故障处理",
+    "alarm handling",
+    "报警代码含义"
+  ],
+  "设定方法区别": [
+    "设定差异",
+    "配置区别",
+    "设置不同"
+  ],
+  "每日巡检检测什么": [
+    "日常点检",
+    "daily check",
+    "巡检项目",
+    "点检表"
+  ],
+  "信号抖动滤波": [
+    "信号去抖",
+    "debounce",
+    "信号滤波",
+    "IO滤波"
+  ],
+  "站点编号波特率": [
+    "站号",
+    "baud rate",
+    "通信参数",
+    "从站地址"
+  ],
+  "机器人高惯量模式": [
+    "高惯量",
+    "high inertia",
+    "大负载模式",
+    "惯量模式"
+  ],
+  "法那科": [
+    "FANUC"
+  ],
+  "法兰克": [
+    "FANUC"
+  ],
+  "变量": [
+    "VR",
+    "Variable Register",
+    "系统变量",
+    "寄存器",
+    "$",
+    "KAREL变量"
+  ],
+  "VR": [
+    "Variable Register",
+    "变量",
+    "系统变量",
+    ".VR",
+    "寄存器"
+  ],
+  "Variable Register": [
+    "VR",
+    "变量",
+    "系统变量",
+    ".VR"
+  ],
+  "输入信号": [
+    "DI",
+    "Digital Input",
+    "I/O信号",
+    "数字输入"
+  ],
+  "输出信号": [
+    "DO",
+    "Digital Output",
+    "I/O信号",
+    "数字输出"
+  ],
+  "MH": [
+    "Material Handling",
+    "物料搬运",
+    "Handling Tool"
+  ],
+  "信号配置": [
+    "Signal Setup",
+    "I/O Config",
+    "变量映射",
+    "VR映射"
+  ],
+  "RTCP": [
+    "Remote TCP",
+    "远程TCP",
+    "远程工具中心点"
+  ],
+  "远程TCP": [
+    "RTCP",
+    "Remote TCP",
+    "远程工具中心点"
+  ],
+  "Remote TCP": [
+    "RTCP",
+    "远程TCP"
+  ],
+  "TCPC": [
+    "Tool Center Point Control",
+    "工具中心点控制"
+  ],
+  "挠度": [
+    "挠曲",
+    "Deflection",
+    "deflection",
+    "Tip Deflection",
+    "Arm Deflection"
+  ]
+}

@@ -1,0 +1,192 @@
+{
+  "queries": [
+    {
+      "query_id": "20260429155643-143510",
+      "query": "介绍下 fanuc robot interface 功能",
+      "top_score": 0.92,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 442,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777449403.265076,
+      "datetime": "2026-04-29 15:56:43"
+    },
+    {
+      "query_id": "20260429155741-cc2193",
+      "query": "fanuc 的物料搬运阀功能介绍，以及空运行模式下的使用",
+      "top_score": 0.8906,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 220,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777449461.0439625,
+      "datetime": "2026-04-29 15:57:41"
+    },
+    {
+      "query_id": "20260429162959-021a56",
+      "query": "fanuc M-900 系列所有机器人的最大速度",
+      "top_score": 0.98,
+      "chunks_count": 5,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 365,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777451399.826456,
+      "datetime": "2026-04-29 16:29:59"
+    },
+    {
+      "query_id": "20260429174152-4139ad",
+      "query": "fanuc M-900 系列所有机器人的最大速度",
+      "top_score": 0.98,
+      "chunks_count": 5,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 309,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777455712.0959415,
+      "datetime": "2026-04-29 17:41:52"
+    },
+    {
+      "query_id": "20260429174247-908b28",
+      "query": "机器人零点编码器值查看什么变量",
+      "top_score": 0.6824,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 185,
+      "model": "mimo-flash",
+      "is_gap": true,
+      "timestamp": 1777455767.314213,
+      "datetime": "2026-04-29 17:42:47"
+    },
+    {
+      "query_id": "20260429180622-7da706",
+      "query": "fanuc M-900 系列所有机器人的最大速度，关节速度/直线速度均可",
+      "top_score": 0.9,
+      "chunks_count": 5,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 282,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777457182.7391875,
+      "datetime": "2026-04-29 18:06:22"
+    },
+    {
+      "query_id": "20260429183158-35772f",
+      "query": "fanuc 的物料搬运阀功能介绍，以及物料搬运阀是否支持空运行模式",
+      "top_score": 0.98,
+      "chunks_count": 6,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 242,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777458718.2937012,
+      "datetime": "2026-04-29 18:31:58"
+    },
+    {
+      "query_id": "20260429183246-c79f41",
+      "query": "/smart_stat",
+      "top_score": 0.9458,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 272,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777458766.8555906,
+      "datetime": "2026-04-29 18:32:46"
+    },
+    {
+      "query_id": "20260429183538-cd994f",
+      "query": "fanuc r-2000ic 系列所有机器人的最大速度，关节速度/直线速度均可",
+      "top_score": 0.9761,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 160,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777458938.1933725,
+      "datetime": "2026-04-29 18:35:38"
+    },
+    {
+      "query_id": "20260429183613-32d087",
+      "query": "fanuc r-2000ic 系列所有机器人的最大速度，关节速度/直线速度均可",
+      "top_score": 0.9761,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 135,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777458973.6755357,
+      "datetime": "2026-04-29 18:36:13"
+    },
+    {
+      "query_id": "20260429193020-d6d06d",
+      "query": "test",
+      "top_score": 0.5,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 240,
+      "model": "mimo-flash",
+      "is_gap": true,
+      "timestamp": 1777462220.6909654,
+      "datetime": "2026-04-29 19:30:20"
+    },
+    {
+      "query_id": "20260429193819-dc0fd4",
+      "query": "fanuc r-2000ic 系列所有机器人的最大速度，关节速度/直线速度均可",
+      "top_score": 0.9761,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 163,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777462699.4743302,
+      "datetime": "2026-04-29 19:38:19"
+    },
+    {
+      "query_id": "20260429194320-464067",
+      "query": "fanuc r-2000ic 系列所有机器人的最大速度，关节速度/直线速度均可",
+      "top_score": 0.9761,
+      "chunks_count": 3,
+      "channel": "MiMo-V2-Flash",
+      "answer_length": 137,
+      "model": "mimo-flash",
+      "is_gap": false,
+      "timestamp": 1777463000.6149461,
+      "datetime": "2026-04-29 19:43:20"
+    },
+    {
+      "query_id": "20260522060229-501c45",
+      "query": "FANUC机器人多工具切换时工具坐标系怎么管理？",
+      "top_score": 0.5,
+      "chunks_count": 3,
+      "channel": "",
+      "answer_length": 1662,
+      "model": "",
+      "is_gap": true,
+      "timestamp": 1779400949.8492997,
+      "datetime": "2026-05-22 06:02:29"
+    },
+    {
+      "query_id": "20260522060232-ded5d4",
+      "query": "FANUC机器人机器人 IO 分配表怎么配置？Group 和 Point 怎么对应？",
+      "top_score": 0.8963,
+      "chunks_count": 6,
+      "channel": "",
+      "answer_length": 3450,
+      "model": "",
+      "is_gap": false,
+      "timestamp": 1779400952.9994018,
+      "datetime": "2026-05-22 06:02:32"
+    }
+  ],
+  "feedback": {},
+  "faq_pairs": [],
+  "stats": {
+    "total_queries": 15,
+    "total_gaps": 3,
+    "total_feedback": 0,
+    "total_faq": 0
+  }
+}
