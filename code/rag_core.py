@@ -230,6 +230,12 @@ def _augment_query(query: str) -> str:
     if re.search(r'(?i)(伺服焊枪|焊枪|servo\s*gun).*挠度|deflection', query):
         aug_parts.append("焊枪挠曲补偿 加压条件画面 三维挠曲补偿 补偿值的设置方法")
 
+    # M-900iB 保养/换油：手册号锚点（静默退化案例 2026-08-20，换油周期=润滑脂更换 3年/11520h）
+    # 根因: 换油周期数值在 B-83444CM/B-83684CM 第 7.3.3 节，chunk 文本无 M-900iB 机型名，
+    #       机型名↔手册号无别名映射 → “机型+主题”组合查询漏召回。此处补手册号锚点。
+    if re.search(r'(?i)M-?900\s*i?B|900iB', query) and re.search(r'换油|保养|润滑|检修|维护|加油|脂', query):
+        aug_parts.append("B-83444CM B-83684CM 润滑脂 更换 定期检修 11520")
+
     # 查询不含 FANUC/brand 关键词时，自动追加以锚定语义域
     if not re.search(r'(?i)fanuc|kuka|abb|yaskawa|kawasaki|发那科', query):
         if not re.search(r'(?i)CNC|ROBODRILL|ROBOCUT|加工中心|数控', query):
@@ -438,6 +444,15 @@ def classify_query(query: str) -> str:
         if regex.search(query):
             return cat
     return ""
+
+
+# 分类标签等价组：2026-08 新版手册（FANUC Manual 13.0 CM，34324 chunks）统一标
+# "FANUC机器人"，历史库（132815 chunks）用细分标签（如 07_机器人）。分类器只认老标签，
+# 导致新版 chunk 被 where_filter 分类过滤误杀（静默退化案例 2026-08-20: M-900iB 换油周期）。
+# where_filter 用等价组展开为 $in 匹配，避免新版/旧版标签互相屏蔽。
+_CATEGORY_EQUIV = {
+    "07_机器人": ["07_机器人", "FANUC机器人"],
+}
 
 
 # ── 二级分类规则 ─────────────────────────────────────────────────
@@ -1053,13 +1068,25 @@ class BM25Index:
         tokens = list(jieba.cut(query))
         scores = self.bm25.get_scores(tokens)
 
-        # 带过滤的搜索
+        # 带过滤的搜索（支持 $eq 与 $in；2026-08-20 修复: $in 此前被静默忽略退回全库）
         if where_filter:
-            cat_key = where_filter.get("category", {}).get("$eq", "")
-            if cat_key:
+            cat_cond = where_filter.get("category", {})
+            if "$eq" in cat_cond:
+                cat_key = cat_cond["$eq"]
                 filtered = [
                     (i, s) for i, s in enumerate(scores)
                     if self.metas[i].get("category", "") == cat_key
+                ]
+                if filtered:
+                    indices, score_vals = zip(*filtered)
+                    indices, score_vals = list(indices), list(score_vals)
+                else:
+                    return []
+            elif "$in" in cat_cond:
+                cat_keys = set(cat_cond["$in"])
+                filtered = [
+                    (i, s) for i, s in enumerate(scores)
+                    if self.metas[i].get("category", "") in cat_keys
                 ]
                 if filtered:
                     indices, score_vals = zip(*filtered)
@@ -1206,7 +1233,12 @@ def _retrieve_single(query: str, top_k: int):
 
     where_filter = None
     if target_category:
-        where_filter = {"category": {"$eq": target_category}}
+        cats = _CATEGORY_EQUIV.get(target_category, [target_category])
+        where_filter = (
+            {"category": {"$eq": cats[0]}}
+            if len(cats) == 1
+            else {"category": {"$in": cats}}
+        )
 
     # ── 并行：SAG entity + 向量搜索 + BM25 搜索 ──
     _t_pre = time.time()
@@ -1259,6 +1291,9 @@ def _retrieve_single(query: str, top_k: int):
     def _do_bm25():
         _tb = time.time()
         r = _bm25_index.search(expanded_query, n_results=BM25_TOP_K, where_filter=where_filter)
+        if not r and where_filter:
+            # 分类过滤下无结果时去掉 filter 重试（与向量检索 fallback 一致，2026-08-20）
+            r = _bm25_index.search(expanded_query, n_results=BM25_TOP_K)
         logger.info(f"[TIMING] BM25 search: {time.time()-_tb:.2f}s")
         return r
 

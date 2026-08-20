@@ -352,5 +352,76 @@
     "deflection",
     "Tip Deflection",
     "Arm Deflection"
+  ],
+  "PCIF": [
+    "PC Interface",
+    "pcif",
+    "pc interface",
+    "PC 接口"
+  ],
+  "PC Interface": [
+    "PCIF",
+    "pcif",
+    "PC 接口",
+    "PC 通信"
+  ],
+  "上位机": [
+    "Robot Interface",
+    "robot interface",
+    "主机",
+    "PC Interface"
+  ],
+  "Robot Interface": [
+    "上位机",
+    "robot interface",
+    "主机"
+  ],
+  "DeviceNet": [
+    "Device Net",
+    "devicenet"
+  ],
+  "Device Net": [
+    "DeviceNet",
+    "devicenet"
+  ],
+  "换油": [
+    "换润滑油",
+    "更换润滑油",
+    "换润滑脂",
+    "更换润滑脂",
+    "润滑脂更换",
+    "供脂",
+    "oil change",
+    "grease change"
+  ],
+  "润滑": [
+    "润滑脂",
+    "油脂",
+    "grease",
+    "lubricant",
+    "润滑油",
+    "润滑剂",
+    "供脂",
+    "润滑脂更换"
+  ],
+  "保养": [
+    "维护",
+    "检修",
+    "定期保养",
+    "定期检修",
+    "维护保养",
+    "maintenance"
+  ],
+  "检修": [
+    "保养",
+    "维护",
+    "定期保养",
+    "定期检修",
+    "inspection"
+  ],
+  "加油量": [
+    "供脂量",
+    "润滑脂量",
+    "grease amount"
   ]
 }
