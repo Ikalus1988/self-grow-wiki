@@ -57,10 +57,16 @@ def rag_search_raw(query: str, top_k: int = 5):
     sag_results = _sag_search(query, top_k=6)
     
     # 合并: exact > hop > vector
+    # 2026-08-21: SAG 结果限数（exact≤2, hop≤1），防止机型列表等 entity 命中
+    # 无脑占满 top_k，把向量精确答案（如 B-83444 润滑脂更换 3年/11520h）挤出。
     merged, seen_src, seen_txt = [], set(), set()
     
+    _exact_n = 0
     for r in sag_results:
         if r['method'] == 'entity-exact' and r['source'] not in seen_src:
+            if _exact_n >= 2:
+                continue
+            _exact_n += 1
             seen_src.add(r['source'])
             merged.append({
                 'source': r['source'], 'text': r.get('text', ''),
@@ -69,8 +75,12 @@ def rag_search_raw(query: str, top_k: int = 5):
             })
             seen_txt.add(r.get('text', ''))
     
+    _hop_n = 0
     for r in sag_results:
         if r['method'] == 'entity-hop' and r['source'] not in seen_src:
+            if _hop_n >= 1:
+                continue
+            _hop_n += 1
             seen_src.add(r['source'])
             merged.append({
                 'source': r['source'], 'text': r.get('text', ''),
@@ -151,7 +161,12 @@ def _structured_trim(results, query="") -> str:
             sn = sn.replace(generic_desc, "").strip("，。； ")
         out.append(f"【{item['model']}】{sn[:150]} [来源: {item['src']}]")
 
-    if not out:
+    # 2026-08-21: 查询本身不含型号（保养/换油/报警等主题类查询）时直接逐条输出，
+    # 避免型号提取只挑出机型列表、丢掉主题答案（M-900iB 换油案例: 润滑脂更换
+    # 3年/11520h 在 B-83444 正文，chunk 无型号名 → 型号提取永远漏掉）。
+    # 注意 model_pat 末项 M-\d+[A-Z]?i[ABCG]? 会匹配无后缀的 M-900iB，故需主题词兜底。
+    _TOPIC_QUERY_RE = re.compile(r'换油|润滑|保养|检修|维护|加油|周期|间隔|定期', re.I)
+    if not out or (query and (_TOPIC_QUERY_RE.search(query) or not model_pat.search(query))):
         # 非型号类查询（报警代码等）：回退到逐条 chunks + 关键词裁剪
         lines = []
         for r in deduped[:5]:
