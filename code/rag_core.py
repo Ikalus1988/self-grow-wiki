@@ -236,6 +236,14 @@ def _augment_query(query: str) -> str:
     if re.search(r'(?i)M-?900\s*i?B|900iB', query) and re.search(r'换油|保养|润滑|检修|维护|加油|脂', query):
         aug_parts.append("B-83444CM B-83684CM 润滑脂 更换 定期检修 11520")
 
+    # R-2000iC 保养/换油：手册号锚点（静默退化案例 2026-08-21）
+    # 根因: R-2000iC 维修说明书 B-82334CM/05 §7.3 数据完整在库（3年/11520h + 指定润滑脂
+    #       Alvania S2 + 各轴供脂量），但其 7.3.3 措辞“减速机的润滑脂…每3年更换一次”
+    #       与查询扩展词“润滑脂更换/供脂”不匹配 → BM25/向量排名沉底（第 29 位），
+    #       entity_models 又为空 → 实体搜索不触发。此处补手册号锚点。
+    if re.search(r'(?i)R-?2000\s*iC|R-2000', query) and re.search(r'换油|保养|润滑|检修|维护|加油|脂', query):
+        aug_parts.append("B-82334CM B-82334EN 润滑脂 更换 定期检修 11520")
+
     # 查询不含 FANUC/brand 关键词时，自动追加以锚定语义域
     if not re.search(r'(?i)fanuc|kuka|abb|yaskawa|kawasaki|发那科', query):
         if not re.search(r'(?i)CNC|ROBODRILL|ROBOCUT|加工中心|数控', query):
@@ -1345,7 +1353,10 @@ def _retrieve_single(query: str, top_k: int):
     if bm25_results:
         existing_texts = set()
         rrf_chunks = _rrf_fusion(vector_results, bm25_results, existing_texts)
-        chunks = rrf_chunks[:top_k * 2]
+        # 2026-08-22: 截断放宽 top_k*3——RRF 融合后短文本精确答案（如 R-2000iC 的
+        # B-82334CM §7.3.3，向量第 8 + BM25 第 19）RRF 排名 ~15-20，top_k*2=20 截断
+        # 会把它切掉；放宽到 30 让 overlap 锚点豁免（见下）有机会保住它。
+        chunks = rrf_chunks[:top_k * 3]
     else:
         chunks = [
             _build_chunk_v2(doc, meta, 1 - dist)
@@ -1723,8 +1734,16 @@ def _retrieve_single(query: str, top_k: int):
         # 1) 先收集豁免 chunk (型号变体/规格一览/动作速度), 按"含速度词"排序取前 top_k
         # 2) 再补普通 chunk 到 max_per_file/文件
         _spec_kw = list(model_variants) + ["规格一览", "动作速度"]
+        # 2026-08-22: 手册号锚点 chunk 优先保留（R-2000iC 换油案例: B-82334 §7.3.3
+        # RRF 排第 17，diversity 截断 top_k 时被砍——锚点命中=强匹配，进 _exempt）
+        _anchors = re.findall(r'B-\d{5}[A-Z]{2}', (expanded_query or query).upper())
+        _anchor_c_ids = set()
+        if _anchors:
+            for _c in chunks:
+                if any(a in str(_c.get("source", "")).upper() for a in _anchors):
+                    _anchor_c_ids.add(id(_c))
         _exempt = [c for c in chunks
-                   if c.get("_variant_kw") or any(w in c["text"] for w in _spec_kw)]
+                   if c.get("_variant_kw") or any(w in c["text"] for w in _spec_kw) or id(c) in _anchor_c_ids]
         # 排序: 含速度/动作速度词的规格表优先于 score (rerank 可能覆盖 variant 分数,
         # 表格文本 cross-encoder 分低, 330L 事件)
         _exempt.sort(key=lambda c: (1 if ("速度" in c["text"] or "动作速度" in c["text"]) else 0,
@@ -1821,7 +1840,23 @@ def _retrieve_single(query: str, top_k: int):
     else:
         _q_tokens = set(re.findall(r'[\w\u4e00-\u9fff]+', query.lower())) - _STOPWORDS
     if _q_tokens and chunks:
+        # 2026-08-22: 手册号锚点豁免——查询含 B-XXXXX 手册号（_augment_query 锚点）时，
+        # source 含该手册号的 chunk 视为精确匹配，不参与 overlap 降权。
+        # 反例: R-2000iC 换油查询锚点 B-82334CM，其 7.3.3 短文本 chunk 重叠率 0.13<0.15
+        #       被降权 0.5 掉出 top-20（对比长文本检修表 overlap 0.33 不降权）——
+        #       短文本精确答案吃亏，锚点本身已是强匹配信号。
+        _anchor_ids = set()
+        _anchors = re.findall(r'B-\d{5}[A-Z]{2}', (expanded_query or query).upper())
+        if _anchors:
+            for _c in chunks:
+                if any(a in str(_c.get("source", "")).upper() for a in _anchors):
+                    _anchor_ids.add(id(_c))
         for _c in chunks:
+            if id(_c) in _anchor_ids:
+                # 锚点命中: 跳过 overlap 降权 + 加分进 top-N（RRF 分数可能低于通用高分 chunk）
+                _c["score"] = min(_c.get("score", 0) + 0.30, 0.95)
+                _c["_anchor_boost"] = True
+                continue
             if _BM25_AVAILABLE:
                 _c_tokens = set(jieba.cut(_c.get("text", "").lower())) - _STOPWORDS
             else:
