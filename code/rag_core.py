@@ -450,8 +450,13 @@ def classify_query(query: str) -> str:
 # "FANUC机器人"，历史库（132815 chunks）用细分标签（如 07_机器人）。分类器只认老标签，
 # 导致新版 chunk 被 where_filter 分类过滤误杀（静默退化案例 2026-08-20: M-900iB 换油周期）。
 # where_filter 用等价组展开为 $in 匹配，避免新版/旧版标签互相屏蔽。
+# 2026-08-21 泛化: 新版手册未做细分分类（全塞 FANUC机器人），所有老分类查询都补充
+# FANUC机器人 为等价候选，避免任何分类查询漏掉新版 chunk。若回归明显再收窄到机器人分类。
 _CATEGORY_EQUIV = {
-    "07_机器人": ["07_机器人", "FANUC机器人"],
+    cat: [cat, "FANUC机器人"]
+    for cat in ["07_机器人", "01_PLC与控制", "02_制造标准", "03_电气图纸",
+                "04_HMI与SCADA", "05_驱动与传动", "06_安全与传感",
+                "08_工程工具", "09_项目文档", "10_能效与诊断"]
 }
 
 
@@ -825,11 +830,34 @@ def _entity_alarm_search(collection, codes: list, existing: set) -> list:
 
 
 def _entity_model_search(collection, models: list, query: str, existing: set) -> list:
-    """用实体索引精确搜索型号 chunks。"""
+    """用实体索引精确搜索型号 chunks。
+
+    2026-08-21: 查询提取的是型号系列（M-900），索引 key 是完整型号（M-900iB/700），
+    精确 get 匹配不到 → 加系列前缀匹配兜底 + 代际约束（iB≠iA≠M-900A）+ 数量上限。
+    """
     _build_entity_index(collection)
     chunks = []
+    added = 0
+    # 代际约束: 查询含型号代际标识（M-900iB/R-2000iC 的 iB/iC）时，只匹配同代际型号
+    # （M-900iB 不匹配 M-900iA / M-900A）。仅针对型号格式，避免误伤英文单词。
+    gen = None
+    m = re.search(r'(?i)([A-Z]{1,2}-\d{2,4})(i[A-Z])', query)
+    if m:
+        gen = m.group(2).upper()
+
+    def _prefix_ok(k: str) -> bool:
+        if not k.upper().startswith(model.upper()):
+            return False
+        return (gen in k.upper()) if gen else True
+
     for model in models[:3]:
         matches = _entity_model_index.get(model, [])
+        if not matches:
+            # 系列前缀兜底: M-900 → 仅 M-900iB/700 等（同代际）
+            matches = [
+                m for k, v in _entity_model_index.items()
+                if _prefix_ok(k) for m in v
+            ]
         for doc, meta in matches:
             if doc in existing:
                 continue
@@ -839,6 +867,11 @@ def _entity_model_search(collection, models: list, query: str, existing: set) ->
             c["_entity_match"] = "model"
             chunks.append(c)
             existing.add(doc)
+            added += 1
+            # 2026-08-21: 上限收紧 8→3——entity 是补充召回，塞太多无主题相关性的
+            # 型号 chunk 会挤占含精确答案的高分结果（M-900iB 换油案例）
+            if added >= 3:
+                return chunks
     return chunks
 
 
@@ -1276,12 +1309,15 @@ def _retrieve_single(query: str, top_k: int):
 
     def _do_vector():
         _tv = time.time()
+        # 2026-08-21: 候选池扩大到 top_k*3(≥30)——RRF 融合需要双源候选，
+        # 向量只取 top_k 时，向量排名靠后但 BM25 靠前的精确答案(如 B-83444 润滑章节
+        # 向量第 22 位) 单源进融合 → RRF 低分被挤出 top-N。
         results = collection.query(
-            query_texts=[expanded_query], n_results=top_k,
+            query_texts=[expanded_query], n_results=max(top_k * 3, 30),
             where=where_filter,
         )
         if not results['documents'][0] and where_filter:
-            results = collection.query(query_texts=[expanded_query], n_results=top_k)
+            results = collection.query(query_texts=[expanded_query], n_results=max(top_k * 3, 30))
         _tv2 = time.time()
         logger.info(f"[TIMING] vector query: {_tv2-_tv:.2f}s")
         return list(zip(

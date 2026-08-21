@@ -73,8 +73,9 @@ cd /mnt/c/Users/Eric Jia/self-grow-wiki && /usr/bin/python3 -m pytest tests/test
 4. 误报教训：遇反常先验证工具本身，再怀疑数据（2026-08-20 M-900iB 换油周期案例：AI 断言"知识库未覆盖"，实测数据在库，是检索静默退化）
 5. 后台长任务：用 Bash `background=true`，输出重定向到文件（如 /tmp/kb_build.log）
 6. Phase 1 全库重跑 ≈8.3h（ChromaDB update 瓶颈），跑前必须快照
-7. **分类标签漂移（2026-08-20 修复）**: 新版手册(34324 chunks)统一标 `FANUC机器人`，历史库(132815)用 `07_机器人` 等细分标签，分类器只认老标签 → where_filter 精确 $eq 误杀新版 chunk。已修: `_CATEGORY_EQUIV` 等价组 + where_filter $in + BM25Index.search 支持 $in。**注意**: 新版手册未做细分分类（全塞 FANUC机器人），其他分类的 $in 等价组待手术 #12 补齐
+7. **分类标签漂移（2026-08-20/21 修复）**: 新版手册(34324 chunks)统一标 `FANUC机器人`，历史库(132815)用 `07_机器人` 等细分标签，分类器只认老标签 → where_filter 精确 $eq 误杀新版 chunk。已修: `_CATEGORY_EQUIV` 等价组（08-21 泛化到全部 10 个老分类，新版未细分分类前所有分类查询都补 FANUC机器人）+ where_filter $in + BM25Index.search 支持 $in。**新版手册细分分类仍待手术 #12 重建时做**
 8. **BM25Index.search 对未知 where 静默退回全库**（2026-08-20 修复）: `$in` 此前被忽略，候选集漂移叠加 overlap-guard 可能把结果全杀；现在 $eq/$in 都显式处理
 
 ## 进度时间线
 - 2026-08-20 23:56: M-900iB 换油周期静默退化修复: 分类标签等价 $in(07_机器人↔FANUC机器人) + BM25 $in 支持 + BM25 fallback + 润滑 synonyms + M-900iB 保养锚点 + 回归用例 16/16 绿（修复前 0 召回 → 修复后答案第 2 位）
+- 2026-08-21: 推荐方案后续落地 — 实体型号前缀匹配+代际约束(iB≠iA)、实体搜索上限 8→3、向量候选池 top_k×3、分类等价组泛化全部 10 类；回归 16/16 绿，M-900iB 换油答案 top-10 内 5 条、B-83444 第 9 位
