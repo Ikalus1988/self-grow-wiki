@@ -46,8 +46,18 @@ except ImportError:
     _SAG_AVAILABLE = False
 
 @_suppress_stdout
+def _clean_query(query: str) -> str:
+    """清理指令前缀（'阅读 sop 上岗书' 等），避免噪音词干扰检索排序（2026-08-21）。"""
+    import re
+    q = query.strip()
+    q = re.sub(r'^(请)?\s*(阅读|读一下|查一下|帮我查下|帮我查|帮我看看|看看|检索|搜索)\s*', '', q, flags=re.I)
+    q = re.sub(r'^(sop\s*上岗书|上岗书|SOP)\s*[，,：:\s]*', '', q, flags=re.I)
+    return q.strip() or query
+
+
 def rag_search_raw(query: str, top_k: int = 5):
     """检索: 向量 + SAG entity 混合 (entity-exact优先, hop次之, 向量补充)"""
+    query = _clean_query(query)
     vec_results = rag_core.retrieve(query, top_k=top_k)
     
     if not _SAG_AVAILABLE:
@@ -91,13 +101,15 @@ def rag_search_raw(query: str, top_k: int = 5):
     
     # ponytail: 330L 事件 — vec 按文本去重 (不按 source), 否则同文件的规格表 chunk
     # 会被 SAG 已命中的机型清单 source 误去重丢弃; 取满 top_k 防二次截断。
+    # 2026-08-21: 截断放宽 top_k+5——SAG 占位会把 vec 靠后的明确机型手册
+    # (B-83444CM/06 在合并第 12 位) 挤出 top_k，导致来源归纳错位。
     for r in vec_results[:top_k]:
         txt = r.get('text', '')
         if txt and txt not in seen_txt:
             seen_txt.add(txt)
             merged.append(r)
     
-    return merged[:top_k] if merged else vec_results
+    return merged[:top_k + 5] if merged else vec_results
 
 def _structured_trim(results, query="") -> str:
     """代码层结构化修剪：去重→提取型号→分组→紧凑输出。LLM 不参与删减。"""
@@ -122,7 +134,7 @@ def _structured_trim(results, query="") -> str:
     generic_desc = None
     models = []
 
-    for r in deduped[:10]:
+    for r in deduped[:15]:
         text = r.get("text", "")
         src_base = r.get("source", "").split("/")[-1]
 
@@ -168,8 +180,10 @@ def _structured_trim(results, query="") -> str:
     _TOPIC_QUERY_RE = re.compile(r'换油|润滑|保养|检修|维护|加油|周期|间隔|定期', re.I)
     if not out or (query and (_TOPIC_QUERY_RE.search(query) or not model_pat.search(query))):
         # 非型号类查询（报警代码等）：回退到逐条 chunks + 关键词裁剪
+        # 2026-08-21: 5→15——靠后的明确机型手册（如 B-83444CM/06 在合并第 12 位）也能进上下文，
+        # 避免来源归纳只够到无机型标注/iA 手册（M-900iB 换油来源错位案例）。
         lines = []
-        for r in deduped[:5]:
+        for r in deduped[:15]:
             src = r.get("source", r.get("filename", "unknown")).split("/")[-1]
             text = r.get("text", "")
             # 裁剪：只保留目标报警代码的段落（找到该代码到下一个报警之间的内容）
