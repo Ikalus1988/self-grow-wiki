@@ -285,7 +285,7 @@ def rag_answer(query: str) -> str:
     if not results:
         return "知识库中未找到相关内容，建议换个关键词试试。"
 
-    chunks_text = _format_chunks(results)
+    chunks_text = _format_chunks(results, query=query)  # 2026-08-22: 传 query 让主题分支生效（否则 B-82334 检修表被型号提取分支丢）
     system_prompt = rag_core.SYSTEM_PROMPT
     user_prompt = f"检索到的文档片段:\n\n{chunks_text}\n\n用户问题: {query}\n\n请按规范回答:"
 
@@ -326,6 +326,11 @@ def handle(req: dict) -> dict:
         args = req["params"].get("arguments", {})
         q = args.get("query", "")
         name = req["params"].get("name", "rag_search")
+        # 2026-08-22: 兼容客户端工具名前缀（hermes mcp_tool 注册为 mcp_rag_rag_answer）
+        # 此前 "mcp_rag_rag_answer" != "rag_answer" → 静默走了 rag_search，
+        # rag_answer 的 LLM 生成链路从未被 hermes 触发（R-2000iC 换油 17:24 失败根因之一）
+        if name.startswith("mcp_"):
+            name = name.split("_", 2)[-1] if name.count("_") >= 2 else name[len("mcp_rag_"):]
         result = rag_answer(q) if name == "rag_answer" else rag_search(q)
         return {"jsonrpc":"2.0","id":mid,"result":{"content":[{"type":"text","text":result}]}}
     return {"jsonrpc":"2.0","id":mid,"error":{"code":-32601,"message":"unknown"}}
