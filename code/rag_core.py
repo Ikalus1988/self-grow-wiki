@@ -236,13 +236,13 @@ def _augment_query(query: str) -> str:
     if re.search(r'(?i)M-?900\s*i?B|900iB', query) and re.search(r'换油|保养|润滑|检修|维护|加油|脂', query):
         aug_parts.append("B-83444CM B-83684CM 润滑脂 更换 定期检修 11520")
 
-    # R-2000iC 保养/换油：手册号锚点（静默退化案例 2026-08-21）
-    # 根因: R-2000iC 维修说明书 B-82334CM/05 §7.3 数据完整在库（3年/11520h + 指定润滑脂
-    #       Alvania S2 + 各轴供脂量），但其 7.3.3 措辞“减速机的润滑脂…每3年更换一次”
-    #       与查询扩展词“润滑脂更换/供脂”不匹配 → BM25/向量排名沉底（第 29 位），
-    #       entity_models 又为空 → 实体搜索不触发。此处补手册号锚点。
+    # R-2000iC 保养/换油：手册号锚点（静默退化案例 2026-08-21/22）
+    # 根因: R-2000iC 维修说明书 B-83644CM/10 §7.3 数据在库（3年/11520h + 电池 1.5 年），
+    #       但实体索引前缀匹配被其他 R-2000 key 占满、BM25/向量排名沉底 → 未召回，
+    #       hermes 被迫用 M-410iC 手册（B-83584）当主来源，供脂量被答给 R-2000iC。
+    #       此处锚定 R-2000iC 专属手册（注意：B-82334 是 M-410iB，勿再锚错）。
     if re.search(r'(?i)R-?2000\s*iC|R-2000', query) and re.search(r'换油|保养|润滑|检修|维护|加油|脂', query):
-        aug_parts.append("B-82334CM B-82334EN 润滑脂 更换 定期检修 11520")
+        aug_parts.append("B-83644CM B-83644EN 润滑脂 更换 定期检修 11520")
 
     # 查询不含 FANUC/brand 关键词时，自动追加以锚定语义域
     if not re.search(r'(?i)fanuc|kuka|abb|yaskawa|kawasaki|发那科', query):
