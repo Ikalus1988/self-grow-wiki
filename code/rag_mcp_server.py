@@ -120,13 +120,16 @@ def _structured_trim(results, query="") -> str:
     alarm_code_match = re.search(r'([A-Z]{2,6})\s*[－\-]\s*(\d{3,4})', query) if query else None
     target_alarm = f"{alarm_code_match.group(1)}-{alarm_code_match.group(2)}" if alarm_code_match else ""
 
-    # 1. 按来源去重，保留最高分 chunk
+    # 1. 按来源去重，每文件最多保留 2 个 chunk（2026-08-23: 检修表数值 chunk 与高分步骤
+    #    chunk 同文件时，只留最高分会丢数值——M-900iB 换油案例 B-82514 检修表 11520 被步骤顶掉）
     seen, deduped = set(), []
+    file_cnt = {}
     for r in sorted(results, key=lambda x: x.get("score",0), reverse=True):
         src = r.get("source", r.get("filename", "unknown"))
         base = src.split("/")[-1]
-        if base not in seen:
-            seen.add(base)
+        cnt = file_cnt.get(base, 0)
+        if cnt < 2:
+            file_cnt[base] = cnt + 1
             deduped.append(r)
 
     # 2. 提取型号 + 去通用描述
