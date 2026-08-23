@@ -173,6 +173,23 @@ def _structured_trim(results, query="") -> str:
             sn = sn.replace(generic_desc, "").strip("，。； ")
         out.append(f"【{item['model']}】{sn[:150]} [来源: {item['src']}]")
 
+    # 2026-08-23: 型号分支补充——查询含具体子型号（如 M-900iB/280L 或 M-900iB 280L）时，
+    # 若型号列表未覆盖该子型号内容（chunk 写"280L"无完整型号格式被型号提取跳过，280L 电机减速机
+    # 查询案例），追加含该子型号的 chunk 原文，避免输出只剩其他机型（跨机型风险）。
+    _q_sub = re.search(r'([A-Z]{1,2}-\d{1,4}i?[A-Z]?(?:[/\s]\d+[A-Za-z]*)?)', query, re.I) if query else None
+    if out and _q_sub:
+        _sub_short = re.split(r'[/\s]', _q_sub.group(1))[-1].upper()
+        _out_has_sub = any(_sub_short in ln.upper() for ln in out)
+        if not _out_has_sub:
+            _added = 0
+            for r in deduped[:15]:
+                if _sub_short in (r.get("text") or "").upper():
+                    src = r.get("source", r.get("filename", "unknown")).split("/")[-1]
+                    out.append(f"[来源: {src}] {r.get('text','')[:220]}")
+                    _added += 1
+                    if _added >= 3:
+                        break
+
     # 2026-08-21: 查询本身不含型号（保养/换油/报警等主题类查询）时直接逐条输出，
     # 避免型号提取只挑出机型列表、丢掉主题答案（M-900iB 换油案例: 润滑脂更换
     # 3年/11520h 在 B-83444 正文，chunk 无型号名 → 型号提取永远漏掉）。
