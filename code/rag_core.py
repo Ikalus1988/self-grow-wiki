@@ -50,6 +50,18 @@ _ALARM_CODE_RE = re.compile(r'(?<![A-Za-z])([A-Z]{2,6}-\d{3,6})(?![A-Za-z0-9])',
 # 机器人型号系列模式：M-900, R-2000 等（_normalize_query 先把 M900→M-900）
 _MODEL_SERIES_RE = re.compile(r'(?<![A-Za-z0-9])([A-Z]{1,2}-\d{2,4})(?!\d)')
 
+# 2026-08-23: 部件/型号类查询信号——查询含这些词时，实体型号检索的参考组
+# （相邻代际）按主题相关性排序：查询的部件词（电机/减速机等）映射到文本词族
+# （MOTOR/A06B、GEAR/A97L），让更换部件表/备件表（真正的“型号”答案）
+# 排在规格页/夹具页前面（B-82135 电机表 A06B 案例）。
+_PART_KW_RE = re.compile(r'型号|部件|电机|减速机|编号|备件|更换|规格')
+_PART_TERM_GROUPS = [
+    (r'电机|马达|伺服|motor', ('电机', '马达', 'MOTOR', 'SERVO', 'A06B')),
+    (r'减速机|齿轮|reducer|gear', ('减速机', '齿轮', 'GEAR', 'REDUCER', 'A97L')),
+    (r'控制器|control', ('控制器', 'CONTROL')),
+    (r'电池|battery', ('电池', 'BATTERY')),
+]
+
 
 # ── 中文别名 → FANUC 标准术语 ──────────────────────────────────────────
 _CHINESE_ALIASES = {
@@ -835,44 +847,119 @@ def _entity_model_search(collection, models: list, query: str, existing: set) ->
 
     2026-08-21: 查询提取的是型号系列（M-900），索引 key 是完整型号（M-900iB/700），
     精确 get 匹配不到 → 加系列前缀匹配兜底 + 代际约束（iB≠iA≠M-900A）+ 数量上限。
+    2026-08-23: 代际约束放宽——同系列内同代际优先召回，相邻代际（如 M-900iA）
+    以略低分数纳入参考（供 5d 近似参考输出：目标机型数据未覆盖时给相邻机型参考）。
+    修正: 精确 key（M-900 系列级 24 chunks）不再短路前缀兜底——统一 rank 排序，
+    同代取 ≤1（vector/BM25 已覆盖同代手册），相邻代参考取 ≤2（共 ≤3，上限不变），
+    部件/型号类查询下参考组按文本词族（MOTOR/A06B、GEAR/A97L）相关性排序。
     """
     _build_entity_index(collection)
     chunks = []
     added = 0
-    # 代际约束: 查询含型号代际标识（M-900iB/R-2000iC 的 iB/iC）时，只匹配同代际型号
-    # （M-900iB 不匹配 M-900iA / M-900A）。仅针对型号格式，避免误伤英文单词。
+    # 代际标识: 查询含型号代际标识（M-900iB/R-2000iC 的 iB/iC）时，同代际优先、
+    # 相邻代际纳入参考（M-900iB 优先 M-900iB，其次 M-900iA）。仅针对型号格式。
     gen = None
     m = re.search(r'(?i)([A-Z]{1,2}-\d{2,4})(i[A-Z])', query)
     if m:
         gen = m.group(2).upper()
+    variants = _extract_model_variants(query)  # 如 280L——同代内 variant 命中最优先
 
-    def _prefix_ok(k: str) -> bool:
-        if not k.upper().startswith(model.upper()):
-            return False
-        return (gen in k.upper()) if gen else True
+    def _rank_key(k: str) -> int:
+        """匹配等级: 3=同代际+规格后缀命中, 2=同代际, 1=同系列相邻代际/系列级, 0=不匹配。"""
+        kk = k.upper()
+        if not kk.startswith(model.upper()):
+            return 0
+        if gen is None:
+            if variants and any(v in kk for v in variants):
+                return 3
+            return 2
+        if gen in kk:
+            if variants and any(v in kk for v in variants):
+                return 3
+            return 2
+        return 1
 
     for model in models[:3]:
-        matches = _entity_model_index.get(model, [])
-        if not matches:
-            # 系列前缀兜底: M-900 → 仅 M-900iB/700 等（同代际）
-            matches = [
-                m for k, v in _entity_model_index.items()
-                if _prefix_ok(k) for m in v
-            ]
-        for doc, meta in matches:
+        # 统一前缀扫描（含精确 key 命中；M-900 系列级 key 由 _rank_key 降为参考级）
+        matches = []
+        for k, v in _entity_model_index.items():
+            r = _rank_key(k)
+            if r:
+                for doc, meta in v:
+                    matches.append((doc, meta, r))
+        # 同代际（含 variant）在前、相邻代际在后（稳定排序）
+        matches.sort(key=lambda x: x[2], reverse=True)
+        # 2026-08-23: 部件/型号类查询下，参考组（rank1）内按主题相关性排序——
+        # 查询的部件词（电机/减速机等）映射文本词族（MOTOR/A06B、GEAR/A97L），
+        # 命中词族多的 chunk（更换部件表/备件表）优先，否则 133 位后的
+        # B-82135 电机表永远取不到（先到先得取到规格页/夹具页）。
+        if _PART_KW_RE.search(query):
+            active_groups = [g for pat, g in _PART_TERM_GROUPS if re.search(pat, query, re.I)]
+            def _part_hits(doc: str) -> int:
+                d = doc.upper()
+                return sum(1 for g in active_groups if any(t in d for t in g))
+            ref_start = next((i for i, x in enumerate(matches) if x[2] == 1), len(matches))
+            ref_group = matches[ref_start:]
+            ref_group.sort(
+                key=lambda x: (
+                    _part_hits(x[0]),
+                    1 if model in x[0][:300].upper() else 0,
+                ),
+                reverse=True,
+            )
+            matches = matches[:ref_start] + ref_group
+        same_gen_n = 0
+        gen_ref_n = 0
+        for doc, meta, rank in matches:
             if doc in existing:
                 continue
+            if rank >= 2:
+                # 同代际上限 1：同代手册内容已被 vector/BM25 覆盖，entity 同代只是补充
+                # （2026-08-21 教训：无主题相关性的型号 chunk 挤占精确答案；
+                # 2026-08-23：名额让给相邻代参考，B-82135 电机表 A06B 需稳定进入）
+                if same_gen_n >= 1:
+                    continue
+                same_gen_n += 1
+            else:
+                # 相邻代际参考：最多 2 个（规格页 + 电机表等），供 5d 近似参考输出
+                if gen_ref_n >= 2:
+                    continue
+                gen_ref_n += 1
             boost = 0.15 if model in doc[:300].upper() else 0.08
-            score = min(0.75 + boost, 0.95)
+            base = min(0.75 + boost, 0.95)
+            score = base if rank >= 2 else base - 0.06  # 相邻代际参考略低
             c = _build_chunk_v2(doc, meta, score)
             c["_entity_match"] = "model"
+            if rank == 1:
+                c["_gen_reference"] = True  # 标记相邻代际参考（供 5d 近似参考输出）
             chunks.append(c)
             existing.add(doc)
             added += 1
             # 2026-08-21: 上限收紧 8→3——entity 是补充召回，塞太多无主题相关性的
             # 型号 chunk 会挤占含精确答案的高分结果（M-900iB 换油案例）
             if added >= 3:
-                return chunks
+                break
+        # 2026-08-23: 第二遍——existing 命中的实体 chunk（BM25/vector 已召回同文本）
+        # 返回升级标记，让合并段给 RRF 版补精确匹配分数/标记。否则实体版被跳过、
+        # RRF 低分版被 top_k 截断（B-82135 电机表 A06B 参考丢失案例）。
+        upgrade_n = 0
+        for doc, meta, rank in matches:
+            if doc not in existing:
+                continue
+            if upgrade_n >= 6:
+                break
+            boost = 0.15 if model in doc[:300].upper() else 0.08
+            base = min(0.75 + boost, 0.95)
+            score = base if rank >= 2 else base - 0.06
+            c = _build_chunk_v2(doc, meta, score)
+            c["_entity_match"] = "model"
+            c["_in_existing"] = True
+            if rank == 1:
+                c["_gen_reference"] = True
+            chunks.append(c)
+            upgrade_n += 1
+        if added >= 3:
+            return chunks
     return chunks
 
 
@@ -1381,6 +1468,18 @@ def _retrieve_single(query: str, top_k: int):
     # 主线程合并结果（统一去重）
     for _fut in _entity_futs:
         for _c in _fut.result():
+            if _c.get("_in_existing"):
+                # 同文本已在 RRF 候选（BM25/vector 命中）→ 升级：实体精确分 + 标记，
+                # 否则实体版被 existing 去重丢弃、RRF 低分版被 top_k 截断
+                # （B-82135 电机表 A06B 参考丢失案例）。
+                for _cc in chunks:
+                    if _cc["text"] == _c["text"]:
+                        _cc["score"] = _c["score"]
+                        for _k in ("_entity_match", "_gen_reference", "_variant_kw"):
+                            if _c.get(_k):
+                                _cc[_k] = _c[_k]
+                        break
+                continue
             if _c["text"] not in existing_texts:
                 chunks.append(_c)
                 existing_texts.add(_c["text"])
@@ -1668,6 +1767,17 @@ def _retrieve_single(query: str, top_k: int):
     chunks = [c for c in chunks
               if not _is_garbage(c) and (c.get("_rrf") or c["score"] >= MIN_SCORE)]
 
+    # ── 实体型号精确召回提分（2026-08-23）──
+    # _entity_model_search 的分数（0.75-0.95）与 vector 相似度分数尺度不同。
+    # 注意: 提分必须小——参考/同代实体压过 vector 精确答案会引发跨代套用
+    # （M-900iB 换油: B-82135 iA 检修表 +0.12→0.95 压过 B-83444 iB §7.3.3）。
+    # 进 top-10 只需 >0.65，故参考 +0.03、同代 +0.02 足够。
+    for c in chunks:
+        if c.get("_gen_reference"):
+            c["score"] = min(c["score"] + 0.03, 0.90)
+        elif c.get("_entity_match") == "model":
+            c["score"] = min(c["score"] + 0.02, 0.92)
+
     # 按分数降序排序
     chunks.sort(key=lambda c: c["score"], reverse=True)
 
@@ -1708,6 +1818,28 @@ def _retrieve_single(query: str, top_k: int):
         _rest = [c for c in chunks if not c.get("_variant_kw")]
         chunks = _var + _rest
 
+    # ── rerank 后恢复实体提分（2026-08-23）──
+    # cross-encoder 对表格/型号清单文本打低分（B-82135 电机表 A06B 被重排到 10 名外），
+    # 但实体索引命中 = 型号精确匹配，可信度高于语义相似度。恢复提分后再排序：
+    # - 相邻代际参考（_gen_reference）: +0.03 cap 0.90（同排序前提分，避免压过精确答案）
+    # - 同代实体（_entity_match=model）: +0.02 cap 0.92
+    _needs_resort = False
+    for c in chunks:
+        if c.get("_gen_reference"):
+            c["score"] = min(c["score"] + 0.03, 0.90)
+            _needs_resort = True
+        elif c.get("_entity_match") == "model":
+            c["score"] = min(c["score"] + 0.02, 0.92)
+            _needs_resort = True
+    if _needs_resort:
+        chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
+        # 重新前置 variant（恢复的顺序可能在 sort 后被覆盖）
+        if any(c.get("_variant_kw") for c in chunks):
+            _var = [c for c in chunks if c.get("_variant_kw")]
+            _rest = [c for c in chunks if not c.get("_variant_kw")]
+            chunks = _var + _rest
+
+
     # ponytail: merge SAG entity results BEFORE diversity filter so entity-exact
     # chunks aren't pushed out of top_k by vector-only chunks
     if _sag_merged:
@@ -1736,10 +1868,13 @@ def _retrieve_single(query: str, top_k: int):
                 if any(a in str(_c.get("source", "")).upper() for a in _anchors):
                     _anchor_c_ids.add(id(_c))
         _exempt = [c for c in chunks
-                   if c.get("_variant_kw") or any(w in c["text"] for w in _spec_kw) or id(c) in _anchor_c_ids]
+                   if c.get("_variant_kw") or c.get("_gen_reference")
+                   or any(w in c["text"] for w in _spec_kw) or id(c) in _anchor_c_ids]
         # 排序: 含速度/动作速度词的规格表优先于 score (rerank 可能覆盖 variant 分数,
-        # 表格文本 cross-encoder 分低, 330L 事件)
-        _exempt.sort(key=lambda c: (1 if ("速度" in c["text"] or "动作速度" in c["text"]) else 0,
+        # 表格文本 cross-encoder 分低, 330L 事件); 相邻代际参考(_gen_reference)同级别——
+        # 5d 近似参考素材, 不能被 B-83684 的 280L 规格表占满前 top_k 挤掉 (2026-08-23)
+        _exempt.sort(key=lambda c: (1 if ("速度" in c["text"] or "动作速度" in c["text"]
+                                          or c.get("_gen_reference")) else 0,
                                     c["score"]),
                      reverse=True)
         selected = list(_exempt[:top_k])

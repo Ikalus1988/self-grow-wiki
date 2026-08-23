@@ -161,6 +161,21 @@ def _structured_trim(results, query="") -> str:
             models.append({"model": m, "snippet": snippet[:200], "src": src_base})
 
     # 3. 格式化输出
+    # 2026-08-23: 同型号多条 snippet 时，优先含 FANUC 部件号（A06B/A97L/MOTOR/GEAR）的
+    # ——否则型号级去重先到先得，重量表/规格页把真正的部件号表（B-82135 电机表 A06B）
+    # 吞掉，LLM 拿不到“型号”答案。
+    from collections import defaultdict
+    _by_model = defaultdict(list)
+    for _item in models:
+        _by_model[_item["model"]].append(_item)
+    models = []
+    for _m, _items in _by_model.items():
+        _items.sort(key=lambda it: (
+            1 if re.search(r'A06B|A97L|MOTOR|GEAR|REDUCER', it["snippet"].upper()) else 0,
+            1 if re.search(r'电机|减速机|型号|部件|规格', it["snippet"]) else 0,
+        ), reverse=True)
+        models.append(_items[0])
+
     out = []
     if generic_desc:
         out.append(f"高惯量模式通用说明：{generic_desc}")
