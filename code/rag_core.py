@@ -1694,10 +1694,15 @@ def _retrieve_single(query: str, top_k: int):
                     break
 
     # 话题补充搜索：去掉型号后做全库语义检索 + 关键词检索，捕获跨型号通用规格
+    # 2026-08-24: 触发条件从“仅型号查询”放宽为“型号查询 或 主题词命中”——无型号的
+    # 通用主题查询（如“减速机寿命如何评估”）之前完全不走补充，润滑脂更换周期等
+    # 维护核心数据召不回，LLM 会误判“未覆盖”（减速机寿命评估测试案例）。
     logger.info(f"[TIMING] model_series search: {time.time()-_t_model:.2f}s (models={model_series})")
     _t_topic = time.time()
     _topic_chunks = []
-    if model_series:
+    _TOPIC_KW = ['电池', '润滑脂', '润滑油', '保养周期', '备件', '配件清单',
+                 '寿命', '减速机', '检修', '维护', '换油', '加油']
+    if model_series or any(kw in query for kw in _TOPIC_KW):
         topic_q = re.sub(r'[A-Z]{1,2}-\d{2,4}[A-Za-z/\d]*', '', query).strip()
         topic_q = re.sub(r'(?i)fanuc\s*', '', topic_q).strip()
         if len(topic_q) >= 2:
@@ -1716,7 +1721,6 @@ def _retrieve_single(query: str, top_k: int):
             except Exception as e:
                 logger.debug(f"话题补充搜索失败: {e}")
             # 关键词补充：提取中文关键词做 $contains 检索（用语义重排，避免泛词刷屏）
-            _TOPIC_KW = ['电池', '润滑脂', '润滑油', '保养周期', '备件', '配件清单']
             hit_kws = [kw for kw in _TOPIC_KW if kw in topic_q]
             for kw in hit_kws[:2]:
                 try:
